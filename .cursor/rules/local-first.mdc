@@ -1,0 +1,17 @@
+---
+description: Memories is a local file organizer for Mac and Windows
+alwaysApply: true
+---
+
+# Local first
+
+Memories is a **file organizer for drives on this computer**. The product is Electron on macOS and Windows.
+
+- It must read this machine plus external disks and USB sticks. Do not ship the organizer as a browser-only app.
+- No account required. Catalog, views (Images / Videos / Documents / Events), place files, backup between local drives.
+- The HTML mock in `app/` is the visual spec. Port it; do not restyle it. `product.html` is the story.
+- **Host:** Electron. Hono on `127.0.0.1`. SQLite via Drizzle. File I/O isolated per OS (`fs-darwin`, `fs-win32`).
+- **A drive is a folder** the user registers, not the whole physical disk. All work toward that drive stays inside that root. Volume UUID/serial is only how we know the folder is plugged in.
+- **Android:** `packages/fs-android`. Default is MTP (`mtp://vid-pid/DCIM`) — plug in, File transfer, unlock. No Developer options. Bundled `adb` is fallback only if MTP is unavailable. Same adapter on Windows.
+- UI talks only to `MemoriesClient`. Core talks only to ports. Do not import `fs`, `drizzle-orm`, or `better-sqlite3` from `packages/ui` or `packages/core`.
+- Only clients in scope: macOS and Windows. Do not add another frontend.

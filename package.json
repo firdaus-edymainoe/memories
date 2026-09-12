@@ -1,0 +1,11 @@
+{
+  "name": "memories",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "dev:ui": "npm run dev -w @memories/ui",
+    "dev:api": "npm start -w @memories/desktop"
+  }
+}

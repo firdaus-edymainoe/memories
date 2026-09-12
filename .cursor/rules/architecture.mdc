@@ -1,0 +1,34 @@
+---
+description: Isolated adapters — core is app logic only
+globs: "{apps,packages}/**/*.{ts,tsx,js}"
+alwaysApply: false
+---
+
+# Architecture
+
+Core is application logic. Disks, OS APIs, and SQLite are adapters. The UI is a port of `app/`.
+
+## Ports
+
+- `packages/ui` talks only to `MemoriesClient`.
+- Use cases in `packages/core` talk only to `CatalogPort`, `FileIO`, and `Volumes`.
+- `packages/core` has no `fs`, `electron`, `drizzle-orm`, `better-sqlite3`, `path`, or `os`.
+- `packages/core` does not read `process.platform`. Electron boot selects `fs-darwin` or `fs-win32`.
+
+## Isolated adapters
+
+- `packages/db-sqlite` — CatalogPort with Drizzle + SQLite. No FileIO.
+- `packages/fs-darwin` — FileIO + Volumes for macOS. No Drizzle. Do not import win32.
+- `packages/fs-win32` — FileIO + Volumes for Windows. No Drizzle. Do not import darwin.
+- `packages/fs-android` — FileIO + Volumes for Android. MTP first (`mtp://`), bundled `adb` fallback (`adb://`). No Drizzle. Do not import darwin/win32.
+- Ingest that needs catalog and disk is a **use case** calling both ports, not a leaky adapter.
+
+## Host
+
+`apps/desktop` wires Hono + UI + SQLite + local FileIO + Android FileIO. No use cases inlined in `main.ts`.
+
+## A drive is a folder
+
+Registering a drive means the user picks a directory. That path is the drive root. Ingest, copy, backup, and thumbs we write toward that drive stay inside it. FileIO must refuse paths outside the root.
+
+The physical volume (Mac volume UUID, Windows serial) is only for presence: connected vs offline after unplug. We do not claim the rest of the disk unless they chose the volume root as that folder.

@@ -1,0 +1,19 @@
+{
+  "name": "@memories/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@memories/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.0"
+  }
+}

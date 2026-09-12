@@ -1,0 +1,27 @@
+{
+  "name": "@memories/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "electron.mjs",
+  "scripts": {
+    "start": "tsx src/serve.ts",
+    "electron": "electron electron.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.4",
+    "@memories/core": "*",
+    "@memories/db-sqlite": "*",
+    "@memories/fs-android": "*",
+    "@memories/fs-darwin": "*",
+    "@memories/fs-win32": "*",
+    "@memories/server": "*",
+    "electron": "^38.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.0"
+  }
+}

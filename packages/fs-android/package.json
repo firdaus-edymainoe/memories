@@ -1,0 +1,21 @@
+{
+  "name": "@memories/fs-android",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "vendor:adb": "node scripts/fetch-adb.mjs"
+  },
+  "dependencies": {
+    "@memories/core": "*",
+    "usb": "^2.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.0"
+  }
+}
