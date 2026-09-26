@@ -155,4 +155,10 @@ export class AndroidFileIO implements FileIO {
     if (parent) await this.mkdir(rootPath, parent);
     await adb(this.run, ["-s", serial, "push", localAbs, remote]);
   }
+
+  async remove(rootPath: string, relativePath: string) {
+    const { serial, remoteRoot } = parseAdbRoot(rootPath);
+    const remote = remoteJoin(remoteRoot, relativePath);
+    await adb(this.run, ["-s", serial, "shell", `rm -f ${quoteShell(remote)}`]);
+  }
 }

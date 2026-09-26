@@ -16,11 +16,13 @@ export { MemoryCatalog, MemoryFileIO, MemoryVolumes } from "./memory.js";
 export { relativeInsideRoot, childRelative, parentRelative } from "./paths.js";
 export { kindFromName, mimeFromName, dayFromTakenAt } from "./kind.js";
 export {
+  copyFileToDrive,
   createVirtualFolder,
   getFileDetail,
   ingestFolder,
   listDriveFolders,
   listDriveEntries,
+  listVolumeEntries,
   listDrives,
   listEvents,
   listLibrary,
@@ -29,6 +31,8 @@ export {
   readOnlineBytes,
   readDriveBytes,
   registerDrive,
+  relocateFile,
+  pruneBackupPaths,
   runBackupJob,
   saveBackupJob,
   syncDrivePresence,

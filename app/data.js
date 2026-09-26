@@ -10,16 +10,19 @@ window.MEMORIES_DATA = {
     {
       id: "phone", name: "Aisha’s iPhone", kind: "phone", online: true, used: 64, total: 128, color: "#10B981",
       folders: [
-        { id: "camera", name: "Camera Roll", types: ["photo", "video"], count: "1,842", size: "38 GB" },
-        { id: "whatsapp", name: "WhatsApp Media", types: ["photo", "video"], count: "412", size: "3.1 GB" },
-        { id: "downloads", name: "Downloads", types: ["document"], count: "28", size: "190 MB" },
+        { id: "dcim", name: "DCIM", parent: null, types: ["photo", "video"], count: "2,254", size: "41 GB" },
+        { id: "camera", name: "Camera", parent: "dcim", types: ["photo", "video"], count: "1,842", size: "38 GB" },
+        { id: "screenshots", name: "Screenshots", parent: "dcim", types: ["photo"], count: "412", size: "3.1 GB" },
+        { id: "whatsapp", name: "WhatsApp Media", parent: null, types: ["photo", "video"], count: "412", size: "3.1 GB" },
+        { id: "downloads", name: "Downloads", parent: null, types: ["document"], count: "28", size: "190 MB" },
       ],
     },
     {
       id: "ssd", name: "Summer SSD", kind: "disk", online: false, used: 1400, total: 2000, color: "#F59E0B",
       folders: [
-        { id: "ssd-wedding", name: "Wedding", types: ["photo", "video"], count: "240", size: "86 GB" },
-        { id: "ssd-family", name: "Family photos", types: ["photo"], count: "4,102", size: "210 GB" },
+        { id: "ssd-root", name: "Photos", parent: null, types: ["photo", "video"], count: "4,342", size: "296 GB" },
+        { id: "ssd-wedding", name: "Wedding", parent: "ssd-root", types: ["photo", "video"], count: "240", size: "86 GB" },
+        { id: "ssd-family", name: "Family photos", parent: "ssd-root", types: ["photo"], count: "4,102", size: "210 GB" },
       ],
     },
     {

@@ -30,15 +30,8 @@ export async function registerDrive(
       volume.volumeId === presence.volumeId ||
       (input.kind === "phone" && phoneVolumeKey(volume.volumeId) === phoneVolumeKey(presence.volumeId)),
   );
-  const existing = (await ports.catalog.listDrives()).find((drive) => {
-    if (drive.rootPath === input.rootPath || drive.rootPath === phoneStorageRoot(input.rootPath)) return true;
-    return (
-      input.kind === "phone" &&
-      drive.kind === "phone" &&
-      phoneVolumeKey(drive.volumeId) === phoneVolumeKey(presence.volumeId)
-    );
-  });
-  const rootPath = input.kind === "phone" ? phoneStorageRoot(input.rootPath) : input.rootPath;
+  const rootPath = input.rootPath;
+  const existing = (await ports.catalog.listDrives()).find((drive) => drive.rootPath === rootPath);
   const drive: Drive = existing
     ? { ...existing, name: input.name, kind: input.kind, rootPath, volumeId: presence.volumeId, online }
     : {
@@ -58,15 +51,6 @@ function phoneVolumeKey(volumeId: string) {
   return volumeId.split(":").slice(0, 3).join(":");
 }
 
-/** Phone drives are the storage root, not Camera/DCIM. */
-export function phoneStorageRoot(rootPath: string) {
-  return rootPath.replace(/\/DCIM$/i, "");
-}
-
-function phoneRootPrefix(rootPath: string) {
-  return /\/DCIM$/i.test(rootPath) ? "DCIM" : "";
-}
-
 export async function syncDrivePresence(ports: Ports): Promise<void> {
   const volumes = await ports.volumes.list();
   const present = new Set(volumes.map((volume) => volume.volumeId));
@@ -77,16 +61,6 @@ export async function syncDrivePresence(ports: Ports): Promise<void> {
         (drive.kind === "phone" && phoneVolumeKey(item.volumeId) === phoneVolumeKey(drive.volumeId)),
     );
     const online = Boolean(volume) || present.has(drive.volumeId);
-    if (drive.kind === "phone" && phoneRootPrefix(drive.rootPath)) {
-      const prefix = phoneRootPrefix(drive.rootPath);
-      const rootPath = phoneStorageRoot(drive.rootPath);
-      for (const replica of await ports.catalog.listReplicasOnDrive(drive.id)) {
-        if (replica.relativePath === prefix || replica.relativePath.startsWith(`${prefix}/`)) continue;
-        await ports.catalog.upsertReplica({ ...replica, relativePath: `${prefix}/${replica.relativePath}` });
-      }
-      await ports.catalog.upsertDrive({ ...drive, rootPath, online });
-      continue;
-    }
     await ports.catalog.setDriveOnline(drive.id, online);
   }
 }
@@ -105,7 +79,12 @@ export async function ingestFolder(
 
   for (const stat of stats) {
     const relativePath = relativeInsideRoot(stat.relativePath);
-    const hash = await ports.fileIO.hash(drive.rootPath, relativePath);
+    let hash: string;
+    try {
+      hash = await ports.fileIO.hash(drive.rootPath, relativePath);
+    } catch {
+      continue;
+    }
     await ports.catalog.upsertObject({
       hash,
       size: stat.size,
@@ -164,6 +143,17 @@ export async function listEvents(ports: Ports): Promise<EventCluster[]> {
   return [...groups.values()].sort((a, b) => b.day.localeCompare(a.day) || (a.place ?? "").localeCompare(b.place ?? ""));
 }
 
+export function pruneBackupPaths(paths: string[]): string[] {
+  const unique = [...new Set(paths.map((path) => relativeInsideRoot(path)))];
+  unique.sort((a, b) => a.length - b.length || a.localeCompare(b));
+  const kept: string[] = [];
+  for (const path of unique) {
+    if (kept.some((parent) => parent === "" || path === parent || path.startsWith(`${parent}/`))) continue;
+    kept.push(path);
+  }
+  return kept;
+}
+
 export async function saveBackupJob(
   ports: Ports,
   input: { sourceDriveId: string; destDriveId: string; sourceRelativePaths: string[] },
@@ -174,10 +164,12 @@ export async function saveBackupJob(
   const source = await ports.catalog.getDrive(input.sourceDriveId);
   const dest = await ports.catalog.getDrive(input.destDriveId);
   if (!source || !dest) throw new Error("Unknown drive");
+  const sourceRelativePaths = pruneBackupPaths(input.sourceRelativePaths);
+  if (!sourceRelativePaths.length) throw new Error("Choose a folder to copy");
   const job = {
     id: id("job"),
     sourceDriveId: input.sourceDriveId,
-    sourceRelativePaths: input.sourceRelativePaths.map(relativeInsideRoot),
+    sourceRelativePaths,
     destDriveId: input.destDriveId,
     lastRunAt: null,
   };
@@ -200,6 +192,7 @@ export async function runBackupJob(ports: Ports, jobId: string) {
   let skipped = 0;
 
   for (const folder of folders) {
+    await ingestFolder(ports, { driveId: source.id, relativePath: folder });
     const stats = await ports.fileIO.walk(source.rootPath, folder);
     for (const stat of stats) {
       const fromRelative = relativeInsideRoot(stat.relativePath);
@@ -274,6 +267,91 @@ export async function getFileDetail(ports: Ports, fileId: string): Promise<FileD
   };
 }
 
+async function readySource(ports: Ports, fileId: string) {
+  const detail = await getFileDetail(ports, fileId);
+  if (!detail) throw new Error("Unknown file");
+  const ready = detail.replicas.find((row) => row.drive.online && row.replica.status === "ready");
+  if (!ready) throw new Error("No connected copy");
+  return ready;
+}
+
+export async function copyFileToDrive(
+  ports: Ports,
+  input: { fileId: string; destDriveId: string; destRelativePath?: string },
+): Promise<Replica> {
+  const dest = await ports.catalog.getDrive(input.destDriveId);
+  if (!dest) throw new Error("Unknown drive");
+  if (!dest.online) throw new Error("Destination drive is offline");
+  const source = await readySource(ports, input.fileId);
+  if (source.drive.id === dest.id) throw new Error("Copy needs a different drive");
+  const toRelative = relativeInsideRoot(input.destRelativePath || source.replica.relativePath);
+  const existing = (await ports.catalog.listReplicas(input.fileId)).find(
+    (replica) => replica.driveId === dest.id && replica.status === "ready",
+  );
+  if (existing) return existing;
+
+  const parent = parentRelative(toRelative);
+  if (parent) await ports.fileIO.mkdir(dest.rootPath, parent);
+  await ports.fileIO.copy({
+    fromRoot: source.drive.rootPath,
+    fromRelative: source.replica.relativePath,
+    toRoot: dest.rootPath,
+    toRelative,
+  });
+  const replica: Replica = {
+    fileId: input.fileId,
+    driveId: dest.id,
+    relativePath: toRelative,
+    status: "ready",
+    progress: null,
+  };
+  await ports.catalog.upsertReplica(replica);
+  return replica;
+}
+
+export async function relocateFile(
+  ports: Ports,
+  input: { fileId: string; destDriveId: string; destRelativePath: string },
+): Promise<Replica> {
+  const dest = await ports.catalog.getDrive(input.destDriveId);
+  if (!dest) throw new Error("Unknown drive");
+  if (!dest.online) throw new Error("Destination drive is offline");
+  const destPath = relativeInsideRoot(input.destRelativePath);
+  if (!destPath) throw new Error("Destination path required");
+  const source = await readySource(ports, input.fileId);
+  if (source.drive.id === dest.id && source.replica.relativePath === destPath) return source.replica;
+
+  if (source.drive.id === dest.id) {
+    const parent = parentRelative(destPath);
+    if (parent) await ports.fileIO.mkdir(dest.rootPath, parent);
+    await ports.fileIO.copy({
+      fromRoot: source.drive.rootPath,
+      fromRelative: source.replica.relativePath,
+      toRoot: dest.rootPath,
+      toRelative: destPath,
+    });
+    const replica: Replica = {
+      fileId: input.fileId,
+      driveId: dest.id,
+      relativePath: destPath,
+      status: "ready",
+      progress: null,
+    };
+    await ports.catalog.upsertReplica(replica);
+    await ports.fileIO.remove(source.drive.rootPath, source.replica.relativePath);
+    return replica;
+  }
+
+  const copied = await copyFileToDrive(ports, {
+    fileId: input.fileId,
+    destDriveId: dest.id,
+    destRelativePath: destPath,
+  });
+  await ports.fileIO.remove(source.drive.rootPath, source.replica.relativePath);
+  await ports.catalog.deleteReplica(source.drive.id, source.replica.relativePath);
+  return copied;
+}
+
 export async function placeFile(ports: Ports, fileId: string): Promise<LibraryFile> {
   const file = await ports.catalog.getFile(fileId);
   if (!file) throw new Error("Unknown file");
@@ -317,6 +395,14 @@ export async function listDriveEntries(ports: Ports, driveId: string, relativePa
   if (!drive.online) throw new Error("Drive is offline");
   const rel = relativeInsideRoot(relativePath);
   return ports.fileIO.list(drive.rootPath, rel);
+}
+
+export async function listVolumeEntries(ports: Ports, mountPath: string, relativePath = "") {
+  const volumes = await ports.volumes.list();
+  const volume = volumes.find((item) => item.mountPath === mountPath);
+  if (!volume) throw new Error("Unknown volume");
+  const rel = relativeInsideRoot(relativePath);
+  return ports.fileIO.list(volume.mountPath, rel);
 }
 
 export async function readOnlineBytes(

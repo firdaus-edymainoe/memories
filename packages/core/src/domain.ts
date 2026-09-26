@@ -46,7 +46,7 @@ export type VirtualFolder = {
 export type BackupJob = {
   id: string;
   sourceDriveId: string;
-  /** Folders inside the source drive root. Empty means the whole root. */
+  /** Folders inside the source drive root. `""` is the drive root. */
   sourceRelativePaths: string[];
   destDriveId: string;
   lastRunAt: string | null;

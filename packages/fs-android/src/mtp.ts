@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { kindFromName, mimeFromName, relativeInsideRoot, type DirEntry, type FileIO, type FileStat } from "@memories/core";
 import { mtpRoot, parseMtpRoot } from "./mtp-uri.js";
 
 export const FMT_ASSOCIATION = 0x3001;
+const FMT_UNDEFINED = 0x3000;
+
+/** Android often reports folders as undefined/0 instead of Association (0x3001). */
+export function isMtpFolder(row: Pick<MtpObject, "format" | "size" | "name">) {
+  if (row.format === FMT_ASSOCIATION) return true;
+  if (row.format && row.format !== FMT_UNDEFINED) return false;
+  return row.size === 0 && !/\.[A-Za-z0-9]{1,8}$/.test(row.name);
+}
 
 export type MtpObject = {
   handle: number;
@@ -18,8 +26,25 @@ export type MtpClient = {
   label: string;
   listChildren(parent: number): Promise<MtpObject[]>;
   readObject(handle: number): Promise<Uint8Array>;
+  mkdir(parent: number, name: string): Promise<number>;
+  sendObject(parent: number, name: string, bytes: Uint8Array): Promise<number>;
+  deleteObject(handle: number): Promise<void>;
   close(): Promise<void>;
 };
+
+export function unsupportedMtpWrites(): Pick<MtpClient, "mkdir" | "sendObject" | "deleteObject"> {
+  return {
+    mkdir: async () => {
+      throw new Error("Creating folders on the phone is not supported");
+    },
+    sendObject: async () => {
+      throw new Error("Copying onto the phone is not supported");
+    },
+    deleteObject: async () => {
+      throw new Error("Deleting on the phone is not supported");
+    },
+  };
+}
 
 export type MtpDeviceInfo = {
   vendorId: number;
@@ -42,7 +67,7 @@ function joinRoot(remoteRoot: string, relativePath: string) {
 async function findDir(client: MtpClient, parent: number, names: string[]): Promise<MtpObject | null> {
   const want = new Set(names.map((n) => n.toLowerCase()));
   const kids = await client.listChildren(parent);
-  return kids.find((row) => row.format === FMT_ASSOCIATION && want.has(row.name.toLowerCase())) ?? null;
+  return kids.find((row) => isMtpFolder(row) && want.has(row.name.toLowerCase())) ?? null;
 }
 
 async function resolveStart(client: MtpClient, remoteRoot: string): Promise<number> {
@@ -60,7 +85,7 @@ async function walkFrom(client: MtpClient, handle: number, folder: string, out: 
   const kids = await client.listChildren(handle);
   for (const row of kids) {
     const relativePath = folder ? `${folder}/${row.name}` : row.name;
-    if (row.format === FMT_ASSOCIATION) {
+    if (isMtpFolder(row)) {
       if (row.name.startsWith(".")) continue;
       await walkFrom(client, row.handle, relativePath, out);
       continue;
@@ -112,7 +137,7 @@ export class MtpFileIO implements FileIO {
       return kids
         .filter((row) => row.name && !row.name.startsWith("."))
         .map((row) => {
-          const directory = row.format === FMT_ASSOCIATION;
+          const directory = isMtpFolder(row);
           return {
             name: row.name,
             relativePath: prefix ? `${prefix}/${row.name}` : row.name,
@@ -146,7 +171,7 @@ export class MtpFileIO implements FileIO {
     try {
       const { client, target } = await this.session(rootPath);
       try {
-        await this.lookup(client, joinRoot(target.remoteRoot, relativePath));
+        await this.lookupAny(client, joinRoot(target.remoteRoot, relativePath));
         return true;
       } finally {
         await client.close();
@@ -156,12 +181,33 @@ export class MtpFileIO implements FileIO {
     }
   }
 
-  async mkdir(_rootPath: string, _relativePath: string) {
-    throw new Error("Creating folders on the phone is not supported");
+  async mkdir(rootPath: string, relativePath: string) {
+    const rel = relativeInsideRoot(relativePath);
+    if (!rel) return;
+    const { client, target } = await this.session(rootPath);
+    try {
+      await this.ensureDir(client, joinRoot(target.remoteRoot, rel));
+    } finally {
+      await client.close();
+    }
   }
 
-  async copy(_args: Parameters<FileIO["copy"]>[0]) {
-    throw new Error("Copy on the phone itself is not supported");
+  async copy(args: Parameters<FileIO["copy"]>[0]) {
+    if (!sameMtpDevice(args.fromRoot, args.toRoot)) {
+      throw new Error("Copy on the phone itself is not supported");
+    }
+    const bytes = await this.read(args.fromRoot, args.fromRelative);
+    await this.putBytes(args.toRoot, args.toRelative, bytes);
+  }
+
+  async remove(rootPath: string, relativePath: string) {
+    const { client, target } = await this.session(rootPath);
+    try {
+      const found = await this.lookupAny(client, joinRoot(target.remoteRoot, relativePath));
+      await client.deleteObject(found.handle);
+    } finally {
+      await client.close();
+    }
   }
 
   async pull(rootPath: string, relativePath: string, localAbs: string) {
@@ -171,11 +217,42 @@ export class MtpFileIO implements FileIO {
     return localAbs;
   }
 
-  async push(_localAbs: string, _rootPath: string, _relativePath: string) {
-    throw new Error("Copying onto the phone is not supported");
+  async push(localAbs: string, rootPath: string, relativePath: string) {
+    const bytes = await readFile(localAbs);
+    await this.putBytes(rootPath, relativePath, bytes);
   }
 
-  private async lookup(client: MtpClient, absPath: string) {
+  private async putBytes(rootPath: string, relativePath: string, bytes: Uint8Array) {
+    const { client, target } = await this.session(rootPath);
+    try {
+      const abs = joinRoot(target.remoteRoot, relativePath);
+      const parts = relativeInsideRoot(abs.replace(/^\//, "")).split("/").filter(Boolean);
+      const name = parts.at(-1);
+      if (!name) throw new Error("Unknown file");
+      const parentPath = parts.slice(0, -1).join("/");
+      const parent = parentPath ? await this.ensureDir(client, parentPath) : 0;
+      await client.sendObject(parent, name, bytes);
+    } finally {
+      await client.close();
+    }
+  }
+
+  private async ensureDir(client: MtpClient, absPath: string) {
+    const parts = relativeInsideRoot(absPath.replace(/^\//, "")).split("/").filter(Boolean);
+    let handle = 0;
+    for (const part of parts) {
+      const kids = await client.listChildren(handle);
+      const existing = kids.find((row) => isMtpFolder(row) && row.name === part);
+      if (existing) {
+        handle = existing.handle;
+        continue;
+      }
+      handle = await client.mkdir(handle, part);
+    }
+    return handle;
+  }
+
+  private async lookupAny(client: MtpClient, absPath: string) {
     const parts = relativeInsideRoot(absPath.replace(/^\//, "")).split("/").filter(Boolean);
     let handle = 0;
     let row: MtpObject | undefined;
@@ -185,8 +262,25 @@ export class MtpFileIO implements FileIO {
       if (!row) throw new Error(`Missing ${absPath}`);
       handle = row.handle;
     }
-    if (!row || row.format === FMT_ASSOCIATION) throw new Error(`Missing ${absPath}`);
+    if (!row) throw new Error(`Missing ${absPath}`);
+    return row;
+  }
+
+  private async lookup(client: MtpClient, absPath: string) {
+    const row = await this.lookupAny(client, absPath);
+    if (isMtpFolder(row)) throw new Error(`Missing ${absPath}`);
     return row.handle;
+  }
+}
+
+function sameMtpDevice(left: string, right: string) {
+  if (left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)) return true;
+  try {
+    const a = parseMtpRoot(left);
+    const b = parseMtpRoot(right);
+    return a.vendorId === b.vendorId && a.productId === b.productId;
+  } catch {
+    return false;
   }
 }
 
@@ -205,9 +299,7 @@ export class MtpVolumes {
   async identify(rootPath: string) {
     parseMtpRoot(rootPath);
     const volumes = await this.list();
-    const match = volumes.find(
-      (volume) => rootPath === volume.mountPath || rootPath.startsWith(`${volume.mountPath}/`),
-    );
+    const match = volumes.find((volume) => sameMtpDevice(rootPath, volume.mountPath));
     if (!match) throw new Error("Android phone not connected. Unlock it and set USB to File transfer.");
     return { ...match, mountPath: rootPath };
   }

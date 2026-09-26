@@ -4,6 +4,34 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Memories</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("memories-theme") || "system";
+          var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+          var chrome = new URLSearchParams(location.search).get("chrome");
+          if (!chrome && /\bElectron\b/.test(navigator.userAgent)) {
+            chrome = /Windows NT/.test(navigator.userAgent)
+              ? "win32"
+              : /Macintosh/.test(navigator.userAgent)
+                ? "darwin"
+                : "linux";
+          }
+          if (chrome) document.documentElement.dataset.chrome = chrome;
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      html[data-chrome="darwin"] .brand {
+        padding-left: 74px;
+        min-height: 32px;
+        display: flex;
+        align-items: center;
+      }
+      html[data-chrome="darwin"] .tour-stage { padding-top: 40px; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

@@ -8,10 +8,13 @@
   },
   "scripts": {
     "test": "vitest run",
-    "vendor:adb": "node scripts/fetch-adb.mjs"
+    "vendor:adb": "node scripts/fetch-adb.mjs",
+    "vendor:libmtp": "node scripts/fetch-libmtp.mjs",
+    "postinstall": "node scripts/fetch-libmtp.mjs --current"
   },
   "dependencies": {
     "@memories/core": "*",
+    "koffi": "^3.2.1",
     "usb": "^2.18.0"
   },
   "devDependencies": {

@@ -1,9 +1,11 @@
 import {
+  copyFileToDrive,
   createVirtualFolder,
   getFileDetail,
   ingestFolder,
   listDriveFolders,
   listDriveEntries,
+  listVolumeEntries,
   listDrives,
   listEvents,
   listLibrary,
@@ -12,6 +14,7 @@ import {
   readOnlineBytes,
   readDriveBytes,
   registerDrive,
+  relocateFile,
   runBackupJob,
   saveBackupJob,
   syncDrivePresence,
@@ -48,6 +51,16 @@ export function createApp(ports: Ports) {
   app.get("/health", (c) => c.json({ ok: true }));
 
   app.get("/volumes", async (c) => c.json({ volumes: await ports.volumes.list() }));
+
+  app.get("/volumes/entries", async (c) => {
+    try {
+      return c.json({
+        entries: await listVolumeEntries(ports, c.req.query("mount") ?? "", c.req.query("path") ?? ""),
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
 
   app.get("/drives", async (c) => c.json({ drives: await listDrives(ports) }));
 
@@ -132,6 +145,24 @@ export function createApp(ports: Ports) {
   app.post("/files/:id/place", async (c) => {
     try {
       return c.json({ file: await placeFile(ports, c.req.param("id")) });
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  app.post("/files/:id/copy", async (c) => {
+    const body = await c.req.json<{ destDriveId: string; destRelativePath?: string }>();
+    try {
+      return c.json({ replica: await copyFileToDrive(ports, { fileId: c.req.param("id"), ...body }) });
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  app.post("/files/:id/relocate", async (c) => {
+    const body = await c.req.json<{ destDriveId: string; destRelativePath: string }>();
+    try {
+      return c.json({ replica: await relocateFile(ports, { fileId: c.req.param("id"), ...body }) });
     } catch (error) {
       fail(error);
     }

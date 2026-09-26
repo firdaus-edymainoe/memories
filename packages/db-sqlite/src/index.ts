@@ -212,6 +212,12 @@ export class SqliteCatalog implements CatalogPort {
     });
   }
 
+  async deleteReplica(driveId: string, relativePath: string) {
+    await this.db
+      .delete(schema.replicas)
+      .where(and(eq(schema.replicas.driveId, driveId), eq(schema.replicas.relativePath, relativePath)));
+  }
+
   async listVirtualFolders() {
     return (await this.db.select().from(schema.virtualFolders)).map(
       (row): VirtualFolder => ({ id: row.id, name: row.name, parentId: row.parentId }),

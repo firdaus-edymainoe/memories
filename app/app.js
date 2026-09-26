@@ -29,7 +29,19 @@
     drawer: false,
     justPlugged: null,
     backupSetup: null,
+    theme: localStorage.getItem("memories-theme") || "system",
   };
+
+  function applyTheme(pref) {
+    const dark =
+      pref === "dark" || (pref !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+  }
+  applyTheme(state.theme);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (state.theme === "system") applyTheme("system");
+  });
 
   if (!Array.isArray(D.backups)) D.backups = [];
   try {
@@ -116,6 +128,22 @@
 
   function sourceFolder(driveId, folderId) {
     return (driveById(driveId)?.folders || []).find((f) => f.id === folderId);
+  }
+
+  function folderKids(drive, parentId) {
+    return (drive?.folders || []).filter((f) => (f.parent || null) === (parentId || null));
+  }
+
+  function folderTrail(drive, folderId) {
+    const trail = [];
+    let id = folderId;
+    while (id) {
+      const folder = (drive?.folders || []).find((f) => f.id === id);
+      if (!folder) break;
+      trail.unshift(folder);
+      id = folder.parent || null;
+    }
+    return trail;
   }
 
   function jobById(id) {
@@ -848,7 +876,6 @@
     const w = state.backupSetup;
     const steps = ["Source", "Folders", "Drive"];
     const src = driveById(w.source);
-    const folders = src?.folders || [];
     let body = "";
     if (w.step === 0) {
       const drives = D.drives.filter(isSourceDrive);
@@ -863,15 +890,43 @@
           })
           .join("")}`;
     } else if (w.step === 1) {
-      body = `<p>Folders on ${esc(src?.name || "this drive")}. Only these will copy when you start backup.</p>
+      const browse = w.browse || null;
+      const here = browse ? (src?.folders || []).find((f) => f.id === browse) : null;
+      const folders = folderKids(src, browse);
+      const trail = folderTrail(src, browse);
+      const thisOn = here ? w.folders.includes(here.id) : false;
+      body = `<p>Folders on ${esc(src?.name || "this drive")}. Open a folder to look inside. Check the ones to copy.</p>
+        <nav class="path" style="flex:none;height:auto;margin-bottom:10px">
+          <button class="${browse ? "" : "cur"}" data-act="bk-browse" data-id="">${esc(src?.name || "Drive")}</button>
+          ${trail
+            .map(
+              (f, i) =>
+                `<span class="sep">/</span><button class="${i === trail.length - 1 ? "cur" : ""}" data-act="bk-browse" data-id="${f.id}">${esc(f.name)}</button>`,
+            )
+            .join("")}
+        </nav>
+        ${
+          here
+            ? `<div class="check-row ${thisOn ? "on" : ""}">
+            <button class="box-hit" data-act="bk-folder" data-id="${here.id}">
+              <span class="box">${thisOn ? "✓" : ""}</span>
+              <div><strong>This folder</strong><div class="muted">${esc(here.name)} — everything in it</div></div>
+            </button>
+          </div>`
+            : ""
+        }
         ${folders
           .map((f) => {
             const on = w.folders.includes(f.id);
             const kinds = f.types.map((t) => ({ photo: "photos", video: "videos", document: "documents" }[t])).join(" · ");
-            return `<button class="check-row ${on ? "on" : ""}" data-act="bk-folder" data-id="${f.id}">
-              <span class="box">${on ? "✓" : ""}</span>
-              <div><strong>${esc(f.name)}</strong><div class="muted">${esc(f.count)} items · ${esc(f.size)} · ${esc(kinds)}</div></div>
-            </button>`;
+            const kids = folderKids(src, f.id).length;
+            return `<div class="check-row ${on ? "on" : ""}">
+              <button class="box-hit" data-act="bk-folder" data-id="${f.id}">
+                <span class="box">${on ? "✓" : ""}</span>
+                <div><strong>${esc(f.name)}</strong><div class="muted">${esc(f.count)} items · ${esc(f.size)} · ${esc(kinds)}</div></div>
+              </button>
+              ${kids ? `<button class="open" data-act="bk-browse" data-id="${f.id}">Open</button>` : ""}
+            </div>`;
           })
           .join("")}`;
     } else {
@@ -921,7 +976,7 @@
         <h1 style="flex:1;margin:0">Backup</h1>
         <button class="btn btn-primary" data-act="bk-new">New backup</button>
       </div>
-      <p class="hello" style="margin-bottom:14px">Plug in a phone or USB. Choose folders once. Next time: plug in, then Start backup.</p>
+      <p class="hello" style="margin-bottom:14px">Backup copies selected folders onto another drive. Plug both in, then Start. It is not how you add a drive.</p>
       ${backupBanner()}
       ${D.backups.length ? D.backups.map(backupCard).join("") : `<div class="empty" style="padding:24px 8px"><h2>No saved backup yet</h2><p>Plug in a phone or thumbdrive, pick folders, pick a drive. We keep that selection.</p></div>`}
       ${
@@ -987,14 +1042,23 @@
       ${D.family.map((p) => `<div class="settings-row"><span>${esc(p.name)}</span><span class="muted">${esc(p.role)}</span></div>`).join("")}
       <h2>This Mac</h2>
       <div class="settings-row"><span>Memories on this computer</span><span class="muted">Free</span></div>
-      <div class="settings-row"><span>Index new files automatically</span><span class="muted">On</span></div>
+      <div class="settings-row"><span>Remember new files in a drive</span><span class="muted">On</span></div>
       <div class="settings-row"><span>Warn when a file has only one copy</span><span class="muted">On</span></div>
       <h2>Backup</h2>
-      <p class="muted" style="margin-bottom:10px">Saved folder selections. Plug in the phone or USB, then Start backup. Local copies stay free.</p>
+      <p class="muted" style="margin-bottom:10px">Saved copy pairs. Plug both drives in, then Start. This is not how you add a drive.</p>
       <button class="btn btn-secondary" data-act="nav" data-screen="backup">Open Backup</button>
       <h2>Cloud</h2>
       <p class="muted" style="margin-bottom:10px">Optional paid spare. 100 GB · 12 GB used. The organizer does not need this.</p>
       <button class="btn btn-primary" data-act="modal" data-modal="cloud">Keep more in the cloud</button>
+      <h2>Appearance</h2>
+      <div class="settings-row">
+        <span>Theme</span>
+        <select data-act="theme" aria-label="Appearance">
+          <option value="system"${state.theme === "system" ? " selected" : ""}>Match system</option>
+          <option value="light"${state.theme === "light" ? " selected" : ""}>Light</option>
+          <option value="dark"${state.theme === "dark" ? " selected" : ""}>Dark</option>
+        </select>
+      </div>
       <h2>Demo</h2>
       <button class="btn btn-secondary" data-act="reset">Replay welcome</button>
     </div>`;
@@ -1115,8 +1179,8 @@
     }
     if (step === 2) {
       const drives = [
-        { name: "This Mac", on: true, color: "#3B82F6" },
-        { name: "Aisha’s iPhone", on: true, color: "#10B981" },
+        { name: "This Mac · Photos", on: true, color: "#3B82F6" },
+        { name: "Android · Camera", on: true, color: "#10B981" },
         { name: "Summer SSD", on: false, color: "#F59E0B" },
         { name: "Travel USB", on: false, color: "#8B5CF6" },
       ];
@@ -1139,7 +1203,7 @@
           <img alt="" width="280" height="180" src="${thumbs[0]}">
           <div class="meta"><b>First dance.jpg</b><span>Wedding · 12 Aug 2025</span></div>
           <div class="chips">
-            <span class="c c1">Phone</span>
+            <span class="c c1">Camera</span>
             <span class="c c2">Summer SSD</span>
             <span class="c c3">Copying 62%</span>
           </div>
@@ -1149,11 +1213,11 @@
     return `<div class="scene scene-cloud" aria-hidden="true">
       <div class="card">
         <img alt="" width="280" height="180" src="${thumbs[0]}">
-        <div class="meta"><b>First dance.jpg</b><span>Same file. Extra spare if you want it.</span></div>
+        <div class="meta"><b>First dance.jpg</b><span>Same file. Still here after you unplug.</span></div>
         <div class="chips">
-          <span class="c">Phone</span>
+          <span class="c">This Mac · Photos</span>
           <span class="c">Summer SSD</span>
-          <span class="c optional">Cloud · optional</span>
+          <span class="c optional">USB · when plugged in</span>
         </div>
       </div>
     </div>`;
@@ -1163,23 +1227,23 @@
     const steps = [
       {
         title: "This is a file manager.",
-        body: "For the disks you already own — this computer, a phone, an SSD, a USB stick. Not another Drive you have to pour your life into.",
+        body: "For the disks you already own — this computer, a phone, an SSD, a USB stick. A drive is a folder you choose, not the whole disk.",
       },
       {
-        title: "Start with your files.",
+        title: "Those files show up here.",
         body: "Images, videos, and documents, by date. Photos and videos also as events, by day and place. You can use only this, forever, with the network unplugged.",
       },
       {
-        title: "Register any drive you own.",
-        body: "This Mac, a phone, the SSD in the drawer, a travel USB, even OneDrive or Google Drive. Plug in, those files can open. Unplug, the catalog still knows.",
+        title: "A drive is a folder you choose.",
+        body: "Photos on this Mac. Camera on the phone. A folder on an SSD. Plug in, pick the folder. Memories remembers what’s in it. The files stay put.",
       },
       {
-        title: "See every copy. Put files where you choose.",
-        body: "Already on the SSD. Only on the phone. Copying right now. Backup is plug in, then Start — onto a disk you trust.",
+        title: "Backup is a separate step.",
+        body: "Open folders on a drive, check the ones to copy, then pick a disk. Plug both in, then Start. Originals stay where they are.",
       },
       {
-        title: "Cloud is a spare. Optional.",
-        body: "Keep a copy offsite if a disk makes you nervous. Skip it forever and Memories still works as a file manager.",
+        title: "Unplug later. The catalog stays.",
+        body: "Memories still shows what you have, and which folder it lives in. Skip the cloud forever and it still works as a file manager.",
       },
     ];
     const s = steps[state.ob];
@@ -1291,7 +1355,7 @@
     if (state.modal === "register") {
       return `<div class="modal-bg" data-act="close-modal"><div class="modal" data-stop>
         <h2>Register a drive</h2>
-        <p>We’ll index what’s on it. Unplug later — the catalog stays.</p>
+        <p>A folder you choose. We’ll remember the files in it. Backup is a separate step.</p>
         ${["External SSD", "USB stick", "This phone", "Folder on this Mac"]
           .map((t) => `<button class="drive-row" data-act="toast" data-msg="Demo: ${t} would appear under Locations" style="border:1px solid var(--line);border-radius:8px;margin-bottom:6px">${esc(t)}</button>`)
           .join("")}
@@ -1671,6 +1735,7 @@
         source,
         folders: [],
         dest: null,
+        browse: null,
         editId: null,
       };
       render();
@@ -1685,6 +1750,7 @@
         source: job.source,
         folders: [...job.folders],
         dest: job.dest,
+        browse: null,
         editId: job.id,
       };
       render();
@@ -1720,7 +1786,14 @@
       if (!state.backupSetup) return;
       state.backupSetup.source = t.dataset.id;
       state.backupSetup.folders = [];
+      state.backupSetup.browse = null;
       state.backupSetup.step = 1;
+      render();
+      return;
+    }
+    if (act === "bk-browse") {
+      if (!state.backupSetup) return;
+      state.backupSetup.browse = t.dataset.id || null;
       render();
       return;
     }
@@ -1799,6 +1872,12 @@
       state.selected = new Set();
       state.selectedFolder = null;
       pushHist();
+      render();
+    }
+    if (e.target.dataset.act === "theme") {
+      state.theme = e.target.value;
+      localStorage.setItem("memories-theme", state.theme);
+      applyTheme(state.theme);
       render();
     }
   }

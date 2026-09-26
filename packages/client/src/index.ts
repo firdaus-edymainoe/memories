@@ -45,6 +45,15 @@ export class MemoriesClient {
     return parse<{ volumes: VolumePresence[] }>(fetch(`${this.baseUrl}/volumes`)).then((b) => b.volumes);
   }
 
+  volumeEntries(mountPath: string, relativePath = "") {
+    const params = new URLSearchParams();
+    params.set("mount", mountPath);
+    if (relativePath) params.set("path", relativePath);
+    return parse<{ entries: DirEntry[] }>(fetch(`${this.baseUrl}/volumes/entries?${params.toString()}`)).then(
+      (b) => b.entries,
+    );
+  }
+
   drives() {
     return parse<{ drives: Drive[] }>(fetch(`${this.baseUrl}/drives`)).then((b) => b.drives);
   }
@@ -86,6 +95,36 @@ export class MemoriesClient {
 
   placeFile(id: string) {
     return parse<{ file: LibraryFile }>(fetch(`${this.baseUrl}/files/${id}/place`, { method: "POST" })).then((b) => b.file);
+  }
+
+  copyFile(id: string, input: { destDriveId: string; destRelativePath?: string }) {
+    return parse<{ replica: { fileId: string; driveId: string; relativePath: string } }>(
+      fetch(`${this.baseUrl}/files/${id}/copy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ).then((b) => b.replica);
+  }
+
+  relocateFile(id: string, input: { destDriveId: string; destRelativePath: string }) {
+    return parse<{ replica: { fileId: string; driveId: string; relativePath: string } }>(
+      fetch(`${this.baseUrl}/files/${id}/relocate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ).then((b) => b.replica);
+  }
+
+  moveToFolder(id: string, folderId: string | null) {
+    return parse<{ ok: boolean }>(
+      fetch(`${this.baseUrl}/files/${id}/move`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ folderId }),
+      }),
+    );
   }
 
   events() {

@@ -94,6 +94,12 @@ export class MemoryCatalog implements CatalogPort {
     else this.replicas.push({ ...replica });
   }
 
+  async deleteReplica(driveId: string, relativePath: string) {
+    this.replicas = this.replicas.filter(
+      (replica) => !(replica.driveId === driveId && replica.relativePath === relativePath),
+    );
+  }
+
   async listVirtualFolders() {
     return [...this.folders.values()];
   }
@@ -260,6 +266,10 @@ export class MemoryFileIO implements FileIO {
       place: blob.place,
     });
     args.onProgress?.(1);
+  }
+
+  async remove(rootPath: string, relativePath: string) {
+    this.blobs.delete(key(rootPath, relativePath));
   }
 
   private require(rootPath: string, relativePath: string): StoredBlob {

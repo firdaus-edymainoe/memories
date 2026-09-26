@@ -36,6 +36,7 @@ export type CatalogPort = {
   listReplicasOnDrive(driveId: string): Promise<Replica[]>;
   findReplica(driveId: string, relativePath: string): Promise<Replica | null>;
   upsertReplica(replica: Replica): Promise<void>;
+  deleteReplica(driveId: string, relativePath: string): Promise<void>;
 
   listVirtualFolders(): Promise<VirtualFolder[]>;
   upsertVirtualFolder(folder: VirtualFolder): Promise<void>;
@@ -71,6 +72,7 @@ export type FileIO = {
   exists(rootPath: string, relativePath: string): Promise<boolean>;
   mkdir(rootPath: string, relativePath: string): Promise<void>;
   copy(args: CopyArgs): Promise<void>;
+  remove(rootPath: string, relativePath: string): Promise<void>;
 };
 
 export type VolumePresence = {

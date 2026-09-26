@@ -9,7 +9,7 @@ import {
   PhoneFileIO,
   PhoneVolumes,
   SwitchFileIO,
-  UsbMtpHost,
+  createOsMtpHost,
   ensureAdb,
 } from "@memories/fs-android";
 import { createApp } from "@memories/server";
@@ -19,7 +19,7 @@ import { join } from "node:path";
 
 function phonePorts() {
   void ensureAdb().catch(() => undefined);
-  const mtp = new UsbMtpHost();
+  const mtp = createOsMtpHost();
   const phoneIO = new PhoneFileIO(new MtpFileIO(mtp), new AndroidFileIO());
   const phoneVolumes = new PhoneVolumes(new MtpVolumes(mtp), new AndroidVolumes());
   return { phoneIO, phoneVolumes };

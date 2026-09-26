@@ -12,31 +12,144 @@ import type {
   VolumePresence,
 } from "@memories/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { applyTheme, chromePlatform, readThemePref, saveThemePref, type ThemePref } from "./theme.js";
 
 type Screen = "browse" | "events" | "inbox" | "drives" | "backup" | "settings";
 
 const TOUR = [
   {
     title: "This is a file manager.",
-    body: "For the disks you already own — this computer, an SSD, a USB stick. A drive is a folder you choose, not the whole disk.",
+    body: "For the disks you already own — this computer, an SSD, a USB stick, a phone. A drive is a folder you choose, not the whole disk.",
   },
   {
-    title: "Start with your files.",
+    title: "Those files show up here.",
     body: "Images, videos, and documents, by date. Photos and videos also as events, by day and place.",
   },
   {
-    title: "Register any drive you own.",
-    body: "A folder on this computer, a plugged-in disk, or an Android phone. Plug the phone in, choose File transfer, unlock it. Unplug later — the catalog still knows.",
+    title: "A drive is a folder you choose.",
+    body: "Photos on this Mac. Camera on the phone. A folder on an SSD. Plug in, unlock, pick the folder. Memories remembers what’s in it. The files stay put.",
   },
   {
-    title: "See every copy. Put files where you choose.",
-    body: "Already on the SSD. Only here. Copying right now. Backup is plug in, then Start — onto a disk you trust.",
+    title: "Backup is a separate step.",
+    body: "Open folders on a drive, check the ones to copy, then pick a disk. Plug both in, then Start. Originals stay where they are.",
   },
   {
-    title: "The catalog stays on this computer.",
-    body: "Unplug a disk and Memories still shows what you have, and which folder it lives in.",
+    title: "Unplug later. The catalog stays.",
+    body: "Memories still shows what you have, and which folder it lives in. Plug the drive back in when you want to open or copy a file.",
   },
 ];
+
+const TOUR_THUMBS = [
+  "https://images.unsplash.com/photo-1519741497674-611481863552?w=240&q=70",
+  "https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=240&q=70",
+  "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=240&q=70",
+  "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=240&q=70",
+  "https://images.unsplash.com/photo-1556912173-46c336c7fd55?w=240&q=70",
+  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=240&q=70",
+];
+
+function TourScene({ step }: { step: number }) {
+  if (step === 0) {
+    return (
+      <div className="scene scene-welcome" aria-hidden="true">
+        {TOUR_THUMBS.slice(0, 3).map((src, i) => (
+          <figure className="print" style={{ ["--i" as string]: i }} key={src}>
+            <img alt="" width={160} height={120} src={src} />
+          </figure>
+        ))}
+      </div>
+    );
+  }
+  if (step === 1) {
+    const groups = [
+      { name: "Images", n: 4 },
+      { name: "Videos", n: 2 },
+      { name: "Documents", n: 2 },
+      { name: "Events", n: 3 },
+    ];
+    return (
+      <div className="scene scene-files" aria-hidden="true">
+        {groups.map((group, gi) => (
+          <div className="g" style={{ ["--g" as string]: gi }} key={group.name}>
+            <strong>{group.name}</strong>
+            <div className="tiles">
+              {Array.from({ length: group.n }, (_, i) =>
+                group.name === "Documents" ? (
+                  <i className="doc" style={{ ["--i" as string]: i }} key={i}>
+                    PDF
+                  </i>
+                ) : (
+                  <img
+                    alt=""
+                    width={56}
+                    height={56}
+                    style={{ ["--i" as string]: i }}
+                    src={TOUR_THUMBS[(gi + i) % TOUR_THUMBS.length]}
+                    key={i}
+                  />
+                ),
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (step === 2) {
+    const drives = [
+      { name: "This Mac · Photos", on: true, color: "#3B82F6" },
+      { name: "Android · Camera", on: true, color: "#10B981" },
+      { name: "Summer SSD", on: false, color: "#F59E0B" },
+      { name: "Travel USB", on: false, color: "#8B5CF6" },
+    ];
+    return (
+      <div className="scene scene-drives" aria-hidden="true">
+        {drives.map((drive, i) => (
+          <div className={`drv${drive.on ? " live" : " wait"}`} style={{ ["--i" as string]: i }} key={drive.name}>
+            <span className="dot" style={{ background: drive.color }} />
+            <strong>{drive.name}</strong>
+            <em className="st-off">Not connected</em>
+            <em className="st-on">Connected</em>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (step === 3) {
+    return (
+      <div className="scene scene-copy" aria-hidden="true">
+        <div className="card">
+          <img alt="" width={280} height={180} src={TOUR_THUMBS[0]} />
+        <div className="meta">
+          <b>First dance.jpg</b>
+          <span>Wedding · 12 Aug 2025</span>
+        </div>
+        <div className="chips">
+          <span className="c c1">Camera</span>
+          <span className="c c2">Summer SSD</span>
+          <span className="c c3">Copying 62%</span>
+        </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="scene scene-cloud" aria-hidden="true">
+      <div className="card">
+        <img alt="" width={280} height={180} src={TOUR_THUMBS[0]} />
+        <div className="meta">
+          <b>First dance.jpg</b>
+          <span>Same file. Still here after you unplug.</span>
+        </div>
+        <div className="chips">
+          <span className="c">This Mac · Photos</span>
+          <span className="c">Summer SSD</span>
+          <span className="c optional">USB · when plugged in</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const KIND_LABEL: Record<FileKind, string> = {
   photo: "Images",
@@ -71,6 +184,43 @@ function isPhoneVolume(volume: VolumePresence) {
 function folderLabel(drive: Drive, path: string) {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? drive.name;
+}
+
+function pathLeaf(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function backupFolderCovered(selected: string[], path: string) {
+  return selected.some((folder) => folder === "" || path === folder || path.startsWith(`${folder}/`));
+}
+
+function toggleBackupFolder(selected: string[], path: string) {
+  if (selected.includes(path)) return selected.filter((item) => item !== path);
+  return [
+    ...selected.filter((item) => {
+      if (path === "") return false;
+      if (item === "") return false;
+      if (item.startsWith(`${path}/`)) return false;
+      if (path.startsWith(`${item}/`)) return false;
+      return true;
+    }),
+    path,
+  ];
+}
+
+function backupPathLabel(path: string, driveName: string) {
+  return path ? path.split("/").filter(Boolean).join(" / ") : driveName;
+}
+
+function joinMount(mountPath: string, relativePath: string) {
+  if (!relativePath) return mountPath;
+  return `${mountPath.replace(/\/$/, "")}/${relativePath}`;
+}
+
+function phoneFolderLabel(rootPath: string) {
+  const folder = rootPath.replace(/^mtp:\/\/[^/]+\/?/, "").replace(/^adb:\/\/[^/]+\/?/, "");
+  return folder || "Android phone";
 }
 
 function fileExt(name: string) {
@@ -149,10 +299,10 @@ const WAIT_READ = [
   "You can go back. We’ll keep the light on.",
 ];
 const WAIT_INDEX = [
-  "Turning files into a catalog…",
+  "Files stay on this drive. Memories just remembers them.",
   "Hashing over USB takes a while.",
   "Big folders are a slow river.",
-  "Leave this screen if you like. Indexing continues.",
+  "Leave this screen if you like. This continues.",
 ];
 
 function FolderWait({ name, mode }: { name: string; mode: "read" | "index" }) {
@@ -187,8 +337,10 @@ function FolderWait({ name, mode }: { name: string; mode: "read" | "index" }) {
           {egg ? <span className="polaroid-note">still in the tray</span> : null}
         </div>
       </div>
-      <h2>{mode === "index" ? `Indexing ${name}` : `Reading ${name}`}</h2>
-      <p>{line}</p>
+      <div className="folder-wait-copy">
+        <h2>{mode === "index" ? `Using ${name}` : `Reading ${name}`}</h2>
+        <p>{line}</p>
+      </div>
     </div>
   );
 }
@@ -211,6 +363,46 @@ function icon(name: string) {
   );
 }
 
+function WindowControls() {
+  const chrome = window.memoriesChrome;
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    if (!chrome?.isMaximized || !chrome.onMaximized) return;
+    void chrome.isMaximized().then(setMaximized);
+    return chrome.onMaximized(setMaximized);
+  }, [chrome]);
+  if (chromePlatform() !== "win32") return null;
+  return (
+    <div className="win-controls">
+      <button type="button" aria-label="Minimize" onClick={() => chrome.minimize?.()}>
+        <svg viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1 5h8" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        aria-label={maximized ? "Restore" : "Maximize"}
+        onClick={() => chrome.toggleMaximize?.()}
+      >
+        {maximized ? (
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3 3.5h5.5V9H3z M1.5 1h5.5v1.5" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="7" height="7" />
+          </svg>
+        )}
+      </button>
+      <button type="button" className="win-close" aria-label="Close" onClick={() => chrome.close?.()}>
+        <svg viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M2 2l6 6M8 2l-6 6" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("memories-tour") === "1");
   const [step, setStep] = useState(0);
@@ -227,15 +419,20 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [detail, setDetail] = useState<FileDetail | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<"register" | "backup" | null>(null);
+  const [modal, setModal] = useState<"register" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [regName, setRegName] = useState("This computer");
   const [regKind, setRegKind] = useState<DriveKind>("computer");
   const [regPath, setRegPath] = useState("");
+  const [bkSetup, setBkSetup] = useState(false);
+  const [bkStep, setBkStep] = useState(0);
   const [bkSource, setBkSource] = useState("");
   const [bkDest, setBkDest] = useState("");
   const [bkFolders, setBkFolders] = useState<string[]>([]);
-  const [sourceFolders, setSourceFolders] = useState<string[]>([]);
+  const [bkPath, setBkPath] = useState("");
+  const [bkEntries, setBkEntries] = useState<DirEntry[]>([]);
+  const [bkBusy, setBkBusy] = useState(false);
+  const [bkError, setBkError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [browseDrive, setBrowseDrive] = useState<Drive | null>(null);
   const [browsePath, setBrowsePath] = useState("");
@@ -246,6 +443,18 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [browseFile, setBrowseFile] = useState<DirEntry | null>(null);
   const [browseViewer, setBrowseViewer] = useState(false);
   const [browseLoad, setBrowseLoad] = useState(false);
+  const [pickerVolume, setPickerVolume] = useState<VolumePresence | null>(null);
+  const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
+  const windowChrome = chromePlatform();
+
+  useEffect(() => {
+    applyTheme(themePref);
+    if (themePref !== "system") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme("system");
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [themePref]);
 
   const show = useCallback((message: string) => {
     setToast(message);
@@ -320,34 +529,24 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const uniqueDrives = useMemo(() => {
     const seen = new Set<string>();
     return drives.filter((drive) => {
-      if (seen.has(drive.volumeId)) return false;
-      seen.add(drive.volumeId);
+      const key = `${drive.volumeId}::${drive.rootPath}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
   }, [drives]);
-  const newPhones = useMemo(
-    () =>
-      phones.filter(
-        (volume) =>
-          !drives.some(
-            (drive) =>
-              drive.volumeId === volume.volumeId ||
-              (drive.kind === "phone" &&
-                drive.volumeId.split(":").slice(0, 3).join(":") === volume.volumeId.split(":").slice(0, 3).join(":")),
-          ),
-      ),
-    [phones, drives],
-  );
 
   useEffect(() => {
     if (screen !== "drives") {
       setBrowseDrive(null);
+      setPickerVolume(null);
       setBrowsePath("");
       setBrowseEntries([]);
       setBrowseError(null);
       setBrowseBusy(false);
       setBrowseWait(null);
     }
+    if (screen !== "backup") setBkSetup(false);
   }, [screen]);
 
   useEffect(() => {
@@ -385,31 +584,46 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
       const drive = await client.registerDrive({ name: regName, kind: regKind, rootPath: regPath });
       await client.ingest(drive.id);
       setModal(null);
-      show(`Indexed ${drive.name}`);
+      show(`${drive.name} is a drive`);
       await refresh();
     } catch (err) {
       show(err instanceof Error ? err.message : "Could not register drive");
     }
   }
 
-  async function onRegisterPhone(volume: VolumePresence) {
-    setRegName(volume.label);
-    setRegKind("phone");
-    setRegPath(volume.mountPath);
+  async function openPicker(volume: VolumePresence) {
+    setModal(null);
+    setPickerVolume(volume);
+    setBrowseDrive(null);
+    setBrowseFile(null);
+    setBrowseViewer(false);
+    setScreen("drives");
+    await loadPicker(volume, "");
+  }
+
+  async function onUseFolder() {
+    if (!pickerVolume) return;
+    const rootPath = joinMount(pickerVolume.mountPath, browsePath);
+    const name = browsePath ? `${pickerVolume.label} · ${pathLeaf(browsePath)}` : pickerVolume.label;
+    setBrowseBusy(true);
+    setBrowseWait("index");
     try {
       const drive = await client.registerDrive({
-        name: volume.label,
+        name,
         kind: "phone",
-        rootPath: volume.mountPath,
-        volumeId: volume.volumeId,
+        rootPath,
+        volumeId: pickerVolume.volumeId,
       });
-      setModal(null);
-      setScreen("drives");
-      show(`Opened ${drive.name}`);
+      await client.ingest(drive.id);
+      setPickerVolume(null);
+      show(`${drive.name} is a drive`);
       await refresh();
       await openBrowse(drive);
     } catch (err) {
-      show(err instanceof Error ? err.message : "Could not register phone");
+      show(err instanceof Error ? err.message : "Could not use this folder");
+    } finally {
+      setBrowseBusy(false);
+      setBrowseWait(null);
     }
   }
 
@@ -418,10 +632,33 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
       show("Connect the drive to browse it");
       return;
     }
+    setPickerVolume(null);
     setBrowseDrive(drive);
     setBrowseFile(null);
     setBrowseViewer(false);
     await loadBrowse(drive.id, "");
+  }
+
+  async function loadPicker(volume: VolumePresence, relativePath: string) {
+    setBrowseBusy(true);
+    setBrowseWait("read");
+    setBrowsePath(relativePath);
+    setBrowseError(null);
+    setBrowseEntries([]);
+    setBrowseFile(null);
+    setBrowseViewer(false);
+    setBrowseLoad(false);
+    try {
+      setBrowseEntries(await client.volumeEntries(volume.mountPath, relativePath));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not list folder";
+      setBrowseError(message);
+      show(message);
+      setBrowseEntries([]);
+    } finally {
+      setBrowseBusy(false);
+      setBrowseWait(null);
+    }
   }
 
   async function loadBrowse(driveId: string, relativePath: string) {
@@ -460,22 +697,6 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     setBrowseViewer(true);
   }
 
-  async function onIndexFolder() {
-    if (!browseDrive) return;
-    setBrowseBusy(true);
-    setBrowseWait("index");
-    try {
-      const result = await client.ingest(browseDrive.id, browsePath || undefined);
-      show(`Indexed ${result.files} files`);
-      await refresh();
-    } catch (err) {
-      show(err instanceof Error ? err.message : "Could not index folder");
-    } finally {
-      setBrowseBusy(false);
-      setBrowseWait(null);
-    }
-  }
-
   async function onPickFolder() {
     try {
       const picked = await client.pickFolder();
@@ -486,6 +707,47 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     }
   }
 
+  async function loadBkFolders(driveId: string, relativePath: string) {
+    setBkBusy(true);
+    setBkPath(relativePath);
+    setBkError(null);
+    setBkEntries([]);
+    try {
+      const entries = await client.driveEntries(driveId, relativePath);
+      setBkEntries(entries.filter((entry) => entry.directory));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not list folder";
+      setBkError(message);
+      show(message);
+    } finally {
+      setBkBusy(false);
+    }
+  }
+
+  function startBackup(sourceId = "") {
+    setBkSetup(true);
+    setBkStep(sourceId ? 1 : 0);
+    setBkSource(sourceId);
+    setBkDest("");
+    setBkFolders([]);
+    setBkPath("");
+    setBkEntries([]);
+    setBkError(null);
+    if (sourceId) void loadBkFolders(sourceId, "");
+  }
+
+  async function pickBkSource(drive: Drive) {
+    if (!drive.online) {
+      show("Connect the drive to list folders");
+      return;
+    }
+    setBkSource(drive.id);
+    setBkFolders([]);
+    setBkDest("");
+    setBkStep(1);
+    await loadBkFolders(drive.id, "");
+  }
+
   async function onSaveBackup() {
     try {
       await client.saveBackup({
@@ -493,7 +755,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         destDriveId: bkDest,
         sourceRelativePaths: bkFolders,
       });
-      setModal(null);
+      setBkSetup(false);
       show("Backup saved");
       setScreen("backup");
       await refresh();
@@ -523,16 +785,10 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     const current = TOUR[step]!;
     const last = step === TOUR.length - 1;
     return (
-      <div className="app onboarding">
+      <div className={`app onboarding${windowChrome ? ` chrome-${windowChrome}` : ""}`}>
         <div className="tour" role="dialog" aria-modal="true" aria-labelledby="tour-title">
           <div className="tour-stage">
-            <div className="scene scene-files">
-              {["Images", "Videos", "Documents", "Events"].map((label, i) => (
-                <div className="g" style={{ ["--g" as string]: i }} key={label}>
-                  <strong>{label}</strong>
-                </div>
-              ))}
-            </div>
+            <TourScene key={step} step={step} />
           </div>
           <div className="tour-panel">
             <p className="tour-brand">Memories</p>
@@ -556,6 +812,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
             </div>
           </div>
         </div>
+        <WindowControls />
       </div>
     );
   }
@@ -569,7 +826,9 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
 
   const renderSidebar = () => (
     <>
-      <div className="brand">Memories</div>
+      <div className="brand" style={windowChrome === "darwin" ? { paddingLeft: 74 } : undefined}>
+        Memories
+      </div>
       <div className="nav-label">Library</div>
       {(["photo", "video", "document"] as FileKind[]).map((kind) => (
         <button
@@ -625,7 +884,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   );
 
   return (
-    <div className={`app${showInspector ? "" : " no-inspector"}`}>
+    <div className={`app${showInspector ? "" : " no-inspector"}${windowChrome ? ` chrome-${windowChrome}` : ""}`}>
       <aside className="sidebar">{renderSidebar()}</aside>
 
       <header className="topbar">
@@ -641,18 +900,26 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
           </svg>
         </button>
         <div className="path">
-          {screen === "drives" && browseDrive ? (
+          {screen === "drives" && (browseDrive || pickerVolume) ? (
             <>
-              <button type="button" onClick={() => setBrowseDrive(null)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setBrowseDrive(null);
+                  setPickerVolume(null);
+                }}
+              >
                 Drives
               </button>
               <span className="sep">/</span>
               <button
                 type="button"
                 className={!browsePath ? "cur" : ""}
-                onClick={() => void loadBrowse(browseDrive.id, "")}
+                onClick={() =>
+                  pickerVolume ? void loadPicker(pickerVolume, "") : browseDrive && void loadBrowse(browseDrive.id, "")
+                }
               >
-                {browseDrive.name}
+                {pickerVolume ? pickerVolume.label : browseDrive?.name}
               </button>
               {browsePath
                 .split("/")
@@ -665,7 +932,11 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                       <button
                         type="button"
                         className={index === parts.length - 1 ? "cur" : ""}
-                        onClick={() => void loadBrowse(browseDrive.id, relativePath)}
+                        onClick={() =>
+                          pickerVolume
+                            ? void loadPicker(pickerVolume, relativePath)
+                            : browseDrive && void loadBrowse(browseDrive.id, relativePath)
+                        }
                       >
                         {part}
                       </button>
@@ -675,7 +946,11 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
             </>
           ) : (
             <button className="cur">
-              {screen === "browse" ? KIND_LABEL[typeFilter] : screen[0]!.toUpperCase() + screen.slice(1)}
+              {screen === "browse"
+                ? KIND_LABEL[typeFilter]
+                : screen === "backup" && bkSetup
+                  ? "New backup"
+                  : screen[0]!.toUpperCase() + screen.slice(1)}
             </button>
           )}
         </div>
@@ -734,7 +1009,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
           ) : (
             <div className="empty">
               <h2>{screen === "inbox" ? "Inbox is empty" : `No ${KIND_LABEL[typeFilter].toLowerCase()} yet`}</h2>
-              <p>Register a folder as a drive to index files inside it.</p>
+              <p>Register a folder as a drive. Those files will show up here.</p>
             </div>
           )
         ) : screen === "events" ? (
@@ -772,32 +1047,44 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
           )
         ) : screen === "drives" ? (
           <div className="pad">
-            {browseDrive ? (
+            {browseDrive || pickerVolume ? (
               <>
                 <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
-                  <h1 style={{ flex: 1, margin: 0 }}>{browseDrive.name}</h1>
+                  <h1 style={{ flex: 1, margin: 0 }}>{pickerVolume ? pickerVolume.label : browseDrive?.name}</h1>
                   <button
                     className="btn btn-secondary"
                     onClick={() => {
                       setBrowseDrive(null);
+                      setPickerVolume(null);
                       setBrowseFile(null);
                       setBrowseViewer(false);
                     }}
                   >
                     Drives
                   </button>
-                  {browseDrive.kind === "phone" && !browsePath ? null : (
-                    <button className="btn btn-primary" disabled={browseBusy} onClick={() => void onIndexFolder()}>
-                      Index this folder
+                  {pickerVolume ? (
+                    <button className="btn btn-primary" disabled={browseBusy} onClick={() => void onUseFolder()}>
+                      Use this folder
                     </button>
-                  )}
+                  ) : null}
                 </div>
-                {browseDrive.kind === "phone" && !browsePath && !browseBusy ? (
-                  <p className="muted">Open a folder, then click a file to preview it. Index Camera or Download when you want those files in Images.</p>
+                {pickerVolume && !browseBusy ? (
+                  <p className="muted">
+                    This folder becomes a Memories drive. Files stay on the phone. Backup is a separate step.
+                  </p>
                 ) : null}
                 <div className="browse-body">
                   {browseBusy && browseWait === "read" ? (
-                    <FolderWait name={folderLabel(browseDrive, browsePath)} mode="read" />
+                    <FolderWait
+                      name={
+                        pickerVolume
+                          ? browsePath
+                            ? pathLeaf(browsePath)
+                            : pickerVolume.label
+                          : folderLabel(browseDrive!, browsePath)
+                      }
+                      mode="read"
+                    />
                   ) : (
                     <>
                       {browseEntries.map((entry) => (
@@ -807,8 +1094,12 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                           type="button"
                           disabled={browseBusy}
                           onClick={() => {
-                            if (entry.directory && browseDrive) {
-                              void loadBrowse(browseDrive.id, entry.relativePath);
+                            if (entry.directory) {
+                              if (pickerVolume) {
+                                void loadPicker(pickerVolume, entry.relativePath);
+                                return;
+                              }
+                              if (browseDrive) void loadBrowse(browseDrive.id, entry.relativePath);
                               return;
                             }
                             pickBrowseFile(entry);
@@ -840,7 +1131,10 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                     </>
                   )}
                   {browseBusy && browseWait === "index" ? (
-                    <FolderWait name={folderLabel(browseDrive, browsePath)} mode="index" />
+                    <FolderWait
+                      name={browsePath ? pathLeaf(browsePath) : pickerVolume?.label ?? folderLabel(browseDrive!, browsePath)}
+                      mode="index"
+                    />
                   ) : null}
                 </div>
               </>
@@ -852,21 +1146,21 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                     Register a drive
                   </button>
                 </div>
-                {newPhones.length ? (
+                {phones.length ? (
                   <div className="phone-banner">
                     <p>
-                      {newPhones.length === 1
-                        ? `${newPhones[0]!.label} is plugged in.`
-                        : `${newPhones.length} Android phones are plugged in.`}{" "}
-                      Open it to browse folders, then index Camera or Download when you want them in the library.
+                      {phones.length === 1
+                        ? `${phones[0]!.label} is plugged in.`
+                        : `${phones.length} Android phones are plugged in.`}{" "}
+                      Choose a folder to use as a drive. Backup is a separate step.
                     </p>
-                    {newPhones.map((volume) => (
+                    {phones.map((volume) => (
                       <button
                         key={volume.volumeId}
                         className="btn btn-primary"
-                        onClick={() => void onRegisterPhone(volume)}
+                        onClick={() => void openPicker(volume)}
                       >
-                        Register {volume.label}
+                        Choose a folder on {volume.label}
                       </button>
                     ))}
                   </div>
@@ -878,15 +1172,15 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                       <strong>{drive.name}</strong>
                       <div className="muted">
                         {drive.online ? "Connected" : "Not connected"}
-                        {drive.kind === "phone" ? " · Android phone" : ` · ${drive.rootPath}`}
+                        {drive.kind === "phone" ? ` · ${phoneFolderLabel(drive.rootPath)}` : ` · ${drive.rootPath}`}
                       </div>
                     </div>
                   </button>
                 ))}
-                {!drives.length && !newPhones.length ? (
+                {!drives.length && !phones.length ? (
                   <div className="empty">
                     <h2>No drives yet</h2>
-                    <p>Pick a folder, or plug in an Android phone. Unlock it and set USB to File transfer. Quit Android File Transfer if it opens.</p>
+                    <p>A drive is a folder you choose. Pick one on this computer, or a folder on a plugged-in phone.</p>
                   </div>
                 ) : null}
               </>
@@ -894,44 +1188,287 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
           </div>
         ) : screen === "backup" ? (
           <div className="pad">
-            <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
-              <h1 style={{ flex: 1, margin: 0 }}>Backup</h1>
-              <button className="btn btn-primary" onClick={() => setModal("backup")}>
-                New backup
-              </button>
-            </div>
-            {jobs.map((job) => {
-              const source = drives.find((d) => d.id === job.sourceDriveId);
-              const dest = drives.find((d) => d.id === job.destDriveId);
-              const ready = source?.online && dest?.online;
-              return (
-                <div className="bk-card" key={job.id}>
-                  <h3>
-                    {source?.name ?? "Source"} → {dest?.name ?? "Destination"}
-                  </h3>
-                  <div className="bk-meta">
-                    {job.sourceRelativePaths.length ? job.sourceRelativePaths.join(", ") : "Whole drive folder"}
-                    {job.lastRunAt ? ` · Last run ${job.lastRunAt.slice(0, 16).replace("T", " ")}` : ""}
-                  </div>
-                  <div className="bk-actions">
-                    <button className="btn btn-primary" disabled={!ready} onClick={() => void onRunBackup(job.id)}>
-                      Start backup
-                    </button>
-                  </div>
-                  {!ready ? <div className="bk-wait">Connect both drives to start.</div> : null}
+            {bkSetup ? (
+              <>
+                <div className="actionbar" style={{ border: 0, padding: "0 0 8px" }}>
+                  <h1 style={{ flex: 1, margin: 0 }}>New backup</h1>
                 </div>
-              );
-            })}
-            {!jobs.length ? (
-              <div className="empty">
-                <h2>No saved backup yet</h2>
-                <p>Pick a source folder and a destination folder. We’ll remember that pair.</p>
-              </div>
-            ) : null}
+                {(() => {
+                  const source = uniqueDrives.find((drive) => drive.id === bkSource);
+                  const canNext = bkStep === 0 ? !!bkSource : bkStep === 1 ? bkFolders.length > 0 : !!bkDest;
+                  return (
+                    <>
+                      <div className="bk-steps">
+                        {["Source", "Folders", "Drive"].map((label, index) => (
+                          <span className={index === bkStep ? "on" : ""} key={label}>
+                            {index + 1}. {label}
+                          </span>
+                        ))}
+                      </div>
+                      {bkStep === 0 ? (
+                        <>
+                          <p className="hello" style={{ marginBottom: 14 }}>
+                            Pick the drive that has the folders you want to copy. You will choose folders next.
+                          </p>
+                          {uniqueDrives.map((drive) => (
+                            <button
+                              key={drive.id}
+                              className={`pick${bkSource === drive.id ? " on" : ""}`}
+                              type="button"
+                              onClick={() => void pickBkSource(drive)}
+                            >
+                              <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
+                              <div>
+                                <strong>{drive.name}</strong>
+                                <div className="muted">
+                                  {drive.online ? "Connected — tap to use" : "Not connected — plug in to list folders"}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                          {!uniqueDrives.length ? (
+                            <div className="empty" style={{ padding: "24px 8px" }}>
+                              <h2>No drives yet</h2>
+                              <p>Register a folder as a drive first. Backup copies from that folder onto another drive.</p>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : bkStep === 1 && source ? (
+                        <>
+                          <p className="hello" style={{ marginBottom: 10 }}>
+                            Folders on {source.name}. Open a folder to look inside. Check the ones to copy. Only these
+                            copy when you start backup.
+                          </p>
+                          <nav className="path" style={{ flex: "none", height: "auto", marginBottom: 10 }}>
+                            <button
+                              type="button"
+                              className={!bkPath ? "cur" : ""}
+                              onClick={() => void loadBkFolders(source.id, "")}
+                            >
+                              {source.name}
+                            </button>
+                            {bkPath
+                              .split("/")
+                              .filter(Boolean)
+                              .map((part, index, parts) => {
+                                const relativePath = parts.slice(0, index + 1).join("/");
+                                return (
+                                  <span key={relativePath} style={{ display: "contents" }}>
+                                    <span className="sep">/</span>
+                                    <button
+                                      type="button"
+                                      className={index === parts.length - 1 ? "cur" : ""}
+                                      onClick={() => void loadBkFolders(source.id, relativePath)}
+                                    >
+                                      {part}
+                                    </button>
+                                  </span>
+                                );
+                              })}
+                          </nav>
+                          {bkBusy ? (
+                            <FolderWait name={bkPath ? pathLeaf(bkPath) : source.name} mode="read" />
+                          ) : (
+                            <>
+                              <div className={`check-row${backupFolderCovered(bkFolders, bkPath) ? " on" : ""}`}>
+                                <button
+                                  type="button"
+                                  className="box"
+                                  aria-pressed={backupFolderCovered(bkFolders, bkPath)}
+                                  aria-label={`Select ${bkPath ? pathLeaf(bkPath) : source.name}`}
+                                  onClick={() => setBkFolders((current) => toggleBackupFolder(current, bkPath))}
+                                >
+                                  {backupFolderCovered(bkFolders, bkPath) ? "✓" : ""}
+                                </button>
+                                <div>
+                                  <strong>This folder</strong>
+                                  <div className="muted">
+                                    {backupPathLabel(bkPath, source.name)} — everything in it
+                                  </div>
+                                </div>
+                              </div>
+                              {bkEntries.map((entry) => {
+                                const on = backupFolderCovered(bkFolders, entry.relativePath);
+                                return (
+                                  <div className={`check-row${on ? " on" : ""}`} key={entry.relativePath}>
+                                    <button
+                                      type="button"
+                                      className="box"
+                                      aria-pressed={on}
+                                      aria-label={`Select ${entry.name}`}
+                                      onClick={() =>
+                                        setBkFolders((current) => toggleBackupFolder(current, entry.relativePath))
+                                      }
+                                    >
+                                      {on ? "✓" : ""}
+                                    </button>
+                                    <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                                      <strong>{entry.name}</strong>
+                                      <div className="muted">
+                                        {on && !bkFolders.includes(entry.relativePath)
+                                          ? "Included with a folder above"
+                                          : "Folder"}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="open"
+                                      aria-label={`Open ${entry.name}`}
+                                      onClick={() => void loadBkFolders(source.id, entry.relativePath)}
+                                    >
+                                      Open
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {bkError ? (
+                                <div className="empty">
+                                  <h2>Could not read this folder</h2>
+                                  <p>{bkError}</p>
+                                </div>
+                              ) : !bkEntries.length ? (
+                                <p className="muted">No folders inside. Select this folder to copy it.</p>
+                              ) : null}
+                            </>
+                          )}
+                          {bkFolders.length ? (
+                            <div className="bk-picks">
+                              {bkFolders.map((path) => (
+                                <span key={path || source.name}>{backupPathLabel(path, source.name)}</span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <p className="hello" style={{ marginBottom: 14 }}>
+                            Where should copies land? Originals stay on {source?.name || "the source"}.
+                          </p>
+                          {uniqueDrives
+                            .filter((drive) => drive.id !== bkSource)
+                            .map((drive) => (
+                              <button
+                                key={drive.id}
+                                className={`pick${bkDest === drive.id ? " on" : ""}`}
+                                type="button"
+                                onClick={() => setBkDest(drive.id)}
+                              >
+                                <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
+                                <div>
+                                  <strong>{drive.name}</strong>
+                                  <div className="muted">
+                                    {drive.online ? "Connected" : "Offline — we’ll wait until you plug it in"}
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                        </>
+                      )}
+                      <div className="bk-wizard-nav">
+                        <button className="btn btn-secondary" type="button" onClick={() => setBkSetup(false)}>
+                          Cancel
+                        </button>
+                        {bkStep > 0 ? (
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            onClick={() => setBkStep((step) => (step > 0 ? step - 1 : 0))}
+                          >
+                            Back
+                          </button>
+                        ) : null}
+                        {bkStep < 2 ? (
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            disabled={!canNext}
+                            onClick={() => setBkStep((step) => (step < 2 ? step + 1 : step))}
+                          >
+                            Continue
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            disabled={!canNext}
+                            onClick={() => void onSaveBackup()}
+                          >
+                            Save backup
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </>
+            ) : (
+              <>
+                <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
+                  <h1 style={{ flex: 1, margin: 0 }}>Backup</h1>
+                  <button className="btn btn-primary" onClick={() => startBackup()}>
+                    New backup
+                  </button>
+                </div>
+                <p className="hello" style={{ marginBottom: 14 }}>
+                  Backup copies selected folders onto another drive. Plug both in, then Start. It is not how you add a
+                  drive.
+                </p>
+                {jobs.map((job) => {
+                  const source = drives.find((d) => d.id === job.sourceDriveId);
+                  const dest = drives.find((d) => d.id === job.destDriveId);
+                  const ready = source?.online && dest?.online;
+                  const folders =
+                    !job.sourceRelativePaths.length || job.sourceRelativePaths.every((path) => !path)
+                      ? "This drive folder"
+                      : job.sourceRelativePaths.map((path) => backupPathLabel(path, source?.name ?? "Drive")).join(", ");
+                  return (
+                    <div className="bk-card" key={job.id}>
+                      <h3>
+                        {source?.name ?? "Source"} → {dest?.name ?? "Destination"}
+                      </h3>
+                      <div className="bk-meta">
+                        {folders}
+                        {job.lastRunAt ? ` · Last run ${job.lastRunAt.slice(0, 16).replace("T", " ")}` : ""}
+                      </div>
+                      <div className="bk-actions">
+                        <button className="btn btn-primary" disabled={!ready} onClick={() => void onRunBackup(job.id)}>
+                          Start backup
+                        </button>
+                      </div>
+                      {!ready ? <div className="bk-wait">Connect both drives to start.</div> : null}
+                    </div>
+                  );
+                })}
+                {!jobs.length ? (
+                  <div className="empty">
+                    <h2>No saved backup yet</h2>
+                    <p>Pick folders on a drive, then a drive to copy onto. We keep that selection.</p>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : (
           <div className="pad">
             <h1>Settings</h1>
+            <h2>Appearance</h2>
+            <div className="settings-row">
+              <span>Theme</span>
+              <select
+                aria-label="Appearance"
+                value={themePref}
+                onChange={(event) => {
+                  const next = event.target.value as ThemePref;
+                  setThemePref(next);
+                  saveThemePref(next);
+                }}
+              >
+                <option value="system">Match system</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+            <h2>Demo</h2>
             <button
               className="btn btn-secondary"
               onClick={() => {
@@ -1022,29 +1559,31 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         </span>
       </footer>
 
-      <nav className="tabs">
-        <button className={screen === "events" ? "active" : ""} onClick={() => setScreen("events")}>
-          Events
-        </button>
-        <button
-          className={screen === "browse" && typeFilter === "photo" ? "active" : ""}
-          onClick={() => {
-            setScreen("browse");
-            setTypeFilter("photo");
-          }}
-        >
-          Images
-        </button>
-        <button aria-label="Copy to…" title="Copy to…">
-          <span className="fab">+</span>
-        </button>
-        <button className={screen === "inbox" ? "active" : ""} onClick={() => setScreen("inbox")}>
-          Inbox
-        </button>
-        <button className={screen === "settings" ? "active" : ""} onClick={() => setScreen("settings")}>
-          You
-        </button>
-      </nav>
+      {windowChrome ? null : (
+        <nav className="tabs">
+          <button className={screen === "events" ? "active" : ""} onClick={() => setScreen("events")}>
+            Events
+          </button>
+          <button
+            className={screen === "browse" && typeFilter === "photo" ? "active" : ""}
+            onClick={() => {
+              setScreen("browse");
+              setTypeFilter("photo");
+            }}
+          >
+            Images
+          </button>
+          <button aria-label="Copy to…" title="Copy to…">
+            <span className="fab">+</span>
+          </button>
+          <button className={screen === "inbox" ? "active" : ""} onClick={() => setScreen("inbox")}>
+            Inbox
+          </button>
+          <button className={screen === "settings" ? "active" : ""} onClick={() => setScreen("settings")}>
+            You
+          </button>
+        </nav>
+      )}
 
       {drawer ? (
         <div className="drawer-bg" onClick={() => setDrawer(false)}>
@@ -1087,15 +1626,15 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         <div className="modal-bg" onClick={() => setModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Register a drive</h2>
-            <p>A folder on this computer, a disk, or an Android phone. We’ll only work inside that root.</p>
+            <p>A folder you choose — on this computer, a disk, or a phone. We’ll remember the files in it. Backup is a separate step.</p>
             {phones.length ? (
               <div className="drive-pick">
                 {phones.map((volume) => (
-                  <button key={volume.volumeId} type="button" onClick={() => void onRegisterPhone(volume)}>
+                  <button key={volume.volumeId} type="button" onClick={() => void openPicker(volume)}>
                     <span className="dot" style={{ background: "#0071E3" }} />
                     <span>
                       <strong>{volume.label}</strong>
-                      <div className="muted">Android phone</div>
+                      <div className="muted">Choose a folder on this phone</div>
                     </span>
                   </button>
                 ))}
@@ -1127,74 +1666,19 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                     Choose folder
                   </button>
                   <button className="btn btn-primary" disabled={!regPath} onClick={() => void onRegister()}>
-                    Register and index
+                    Use this folder
                   </button>
                 </div>
               </>
             ) : (
-              <p className="muted">Use a connected phone above. Unlock it and set USB to File transfer.</p>
+              <p className="muted">Choose a folder on a connected phone above. Unlock it and set USB to File transfer.</p>
             )}
           </div>
         </div>
       ) : null}
 
-      {modal === "backup" ? (
-        <div className="modal-bg" onClick={() => setModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>New backup</h2>
-            <p>Source folder → destination folder. Next time: Start backup.</p>
-            <label className="settings-row">
-              <span>From</span>
-              <select
-                value={bkSource}
-                onChange={(e) => {
-                  setBkSource(e.target.value);
-                  void client.driveFolders(e.target.value).then(setSourceFolders);
-                }}
-              >
-                <option value="">Select</option>
-                {uniqueDrives.map((drive) => (
-                  <option key={drive.id} value={drive.id}>
-                    {drive.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {sourceFolders.map((folder) => (
-              <button
-                key={folder}
-                className={`check-row${bkFolders.includes(folder) ? " on" : ""}`}
-                onClick={() =>
-                  setBkFolders((current) =>
-                    current.includes(folder) ? current.filter((f) => f !== folder) : [...current, folder],
-                  )
-                }
-              >
-                <span className="box">{bkFolders.includes(folder) ? "✓" : ""}</span>
-                {folder}
-              </button>
-            ))}
-            <label className="settings-row">
-              <span>To</span>
-              <select value={bkDest} onChange={(e) => setBkDest(e.target.value)}>
-                <option value="">Select</option>
-                {drives
-                  .filter((drive) => drive.id !== bkSource)
-                  .map((drive) => (
-                    <option key={drive.id} value={drive.id}>
-                      {drive.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <button className="btn btn-primary" disabled={!bkSource || !bkDest} onClick={() => void onSaveBackup()}>
-              Save backup
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {toast ? <div className="toast">{toast}</div> : null}
+      <WindowControls />
     </div>
   );
 }

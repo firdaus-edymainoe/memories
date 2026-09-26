@@ -64,6 +64,10 @@ export class SwitchFileIO implements FileIO {
     await this.phone.push(localJoin(args.fromRoot, args.fromRelative), args.toRoot, args.toRelative);
     args.onProgress?.(1);
   }
+
+  remove(rootPath: string, relativePath: string) {
+    return this.pick(rootPath).remove(rootPath, relativePath);
+  }
 }
 
 export class MergeVolumes implements Volumes {

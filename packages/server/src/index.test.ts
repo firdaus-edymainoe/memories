@@ -60,6 +60,68 @@ describe("createApp", () => {
     expect(await driveMedia.text()).toBe("hero-bytes");
   });
 
+  it("copies a new file to another drive and relocates another", async () => {
+    const { app, fileIO, volumes } = harness();
+    volumes.connect({ volumeId: "mac", mountPath: "/Mac", label: "Mac" });
+    volumes.connect({ volumeId: "usb", mountPath: "/USB", label: "USB" });
+    fileIO.seed("/Mac/Family", "fresh.jpg", "fresh-photo");
+    fileIO.seed("/Mac/Family", "shift.txt", "shift-doc");
+    const mac = await (
+      await app.request("/drives", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Mac", kind: "computer", rootPath: "/Mac/Family", volumeId: "mac" }),
+      })
+    ).json();
+    const usb = await (
+      await app.request("/drives", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "USB", kind: "usb", rootPath: "/USB/Backup", volumeId: "usb" }),
+      })
+    ).json();
+    await app.request("/ingest", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ driveId: mac.drive.id }),
+    });
+    const { files } = await (await app.request("/files")).json();
+    const photo = files.find((file: { name: string }) => file.name === "fresh.jpg");
+    const doc = files.find((file: { name: string }) => file.name === "shift.txt");
+
+    const copied = await app.request(`/files/${photo.id}/copy`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ destDriveId: usb.drive.id }),
+    });
+    expect(copied.status).toBe(200);
+    expect(await fileIO.exists("/Mac/Family", "fresh.jpg")).toBe(true);
+    expect(await fileIO.exists("/USB/Backup", "fresh.jpg")).toBe(true);
+
+    const moved = await app.request(`/files/${doc.id}/relocate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ destDriveId: usb.drive.id, destRelativePath: "Inbox/shift.txt" }),
+    });
+    expect(moved.status).toBe(200);
+    expect(await fileIO.exists("/Mac/Family", "shift.txt")).toBe(false);
+    expect(await fileIO.exists("/USB/Backup", "Inbox/shift.txt")).toBe(true);
+
+    const folder = await (
+      await app.request("/folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Trip copies" }),
+      })
+    ).json();
+    const assigned = await app.request(`/files/${photo.id}/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ folderId: folder.folder.id }),
+    });
+    expect(assigned.status).toBe(200);
+  });
+
   it("rejects backup when destination is offline", async () => {
     const { app, volumes } = harness();
     volumes.connect({ volumeId: "a", mountPath: "/A", label: "A" });
@@ -85,7 +147,7 @@ describe("createApp", () => {
         body: JSON.stringify({
           sourceDriveId: a.drive.id,
           destDriveId: b.drive.id,
-          sourceRelativePaths: [],
+          sourceRelativePaths: [""],
         }),
       })
     ).json();

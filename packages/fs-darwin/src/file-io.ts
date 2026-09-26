@@ -1,7 +1,7 @@
 import { kindFromName, mimeFromName, relativeInsideRoot, type DirEntry, type FileIO, type FileStat } from "@memories/core";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 
 function resolveInside(rootPath: string, relativePath: string) {
@@ -82,6 +82,10 @@ export class NodeFileIO implements FileIO {
     await mkdir(dirname(to), { recursive: true });
     await copyFile(from, to);
     args.onProgress?.(1);
+  }
+
+  async remove(rootPath: string, relativePath: string) {
+    await unlink(resolveInside(rootPath, relativePath));
   }
 }
 

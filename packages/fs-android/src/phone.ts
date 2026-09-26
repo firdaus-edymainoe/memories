@@ -50,6 +50,10 @@ export class PhoneFileIO implements PhoneBridge {
     return this.pick(args.fromRoot).copy(args);
   }
 
+  remove(rootPath: string, relativePath: string) {
+    return this.pick(rootPath).remove(rootPath, relativePath);
+  }
+
   pull(rootPath: string, relativePath: string, localAbs: string) {
     return this.pick(rootPath).pull(rootPath, relativePath, localAbs);
   }
