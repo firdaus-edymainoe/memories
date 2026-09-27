@@ -467,15 +467,29 @@
       gap: 16px;
       padding: 24px 0;
       border-top: 1px solid var(--line);
+      opacity: 0;
+      transform: translateX(-14px);
+      transition: opacity 520ms var(--ease-out), transform 520ms var(--ease-out);
     }
     .how-step:last-child { border-bottom: 1px solid var(--line); }
+    .how.in .how-step { opacity: 1; transform: none; }
+    .how.in .how-step:nth-child(1) { transition-delay: 40ms; }
+    .how.in .how-step:nth-child(2) { transition-delay: 200ms; }
+    .how.in .how-step:nth-child(3) { transition-delay: 360ms; }
     .how-n {
       font-family: var(--serif);
       font-size: 22px;
       font-weight: 650;
       color: var(--leaf);
       width: 1.4em;
+      transform: scale(0.86);
+      opacity: 0.35;
+      transition: transform 480ms var(--ease-out), opacity 480ms var(--ease-out);
     }
+    .how.in .how-step:nth-child(1) .how-n { transition-delay: 40ms; }
+    .how.in .how-step:nth-child(2) .how-n { transition-delay: 200ms; }
+    .how.in .how-step:nth-child(3) .how-n { transition-delay: 360ms; }
+    .how.in .how-n { transform: none; opacity: 1; }
     .how-step h3 { font-size: 19px; font-weight: 700; margin-bottom: 4px; }
     .how-step p { color: var(--mute); font-size: 17px; }
 
@@ -497,13 +511,14 @@
       border-radius: 12px;
       background: var(--canvas);
       opacity: 0;
-      transform: translateY(10px);
-      animation: rise 560ms var(--ease-out) both;
+      transform: translateY(12px);
+      transition: opacity 480ms var(--ease-out), transform 480ms var(--ease-out);
     }
-    .place-row:nth-child(1) { animation-delay: 0.05s; }
-    .place-row:nth-child(2) { animation-delay: 0.18s; }
-    .place-row:nth-child(3) { animation-delay: 0.32s; }
-    .place-row:nth-child(4) { animation-delay: 0.46s; }
+    .places-card.in .place-row { opacity: 1; transform: none; }
+    .places-card.in .place-row:nth-child(1) { transition-delay: 120ms; }
+    .places-card.in .place-row:nth-child(2) { transition-delay: 260ms; }
+    .places-card.in .place-row:nth-child(3) { transition-delay: 400ms; }
+    .places-card.in .place-row:nth-child(4) { transition-delay: 540ms; }
     .place-ico {
       width: 36px;
       height: 36px;
@@ -530,6 +545,8 @@
       border-radius: 50%;
       background: var(--leaf);
       box-shadow: 0 0 0 3px var(--leaf-soft);
+    }
+    .places-card.in .place-row:not(.off) .place-status i {
       animation: pulse 2.2s var(--ease-in-out) infinite;
     }
     .place-row.off .place-status { color: var(--mute); }
@@ -540,15 +557,23 @@
       animation: none;
     }
 
+    #story {
+      overflow: hidden;
+      padding-bottom: 72px;
+    }
     .story {
       display: grid;
       grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
       gap: 48px;
       align-items: center;
     }
-    .story-stack { position: relative; min-height: 340px; }
+    .story-stack {
+      position: relative;
+      width: min(100%, 460px);
+      /* In-flow primary print sets height so nothing spills into the next section */
+      padding-bottom: 8px;
+    }
     .story-frame {
-      position: absolute;
       background: var(--print);
       padding: 12px 12px 36px;
       box-shadow: var(--shadow-lg);
@@ -566,20 +591,20 @@
       color: var(--mute);
     }
     .sf1 {
-      width: min(78%, 420px);
-      left: 0;
-      top: 18px;
-      transform: rotate(-3deg);
+      position: relative;
+      width: 88%;
       z-index: 2;
-      animation: settle 800ms var(--ease-out) both, bob 6s var(--ease-in-out) 0.8s infinite;
+      transform: rotate(-2.5deg);
+      animation: story-bob 6s var(--ease-in-out) infinite;
     }
     .sf2 {
-      width: min(58%, 280px);
+      position: absolute;
+      width: 56%;
+      top: 6%;
       right: 0;
-      bottom: 10px;
-      transform: rotate(5deg);
       z-index: 1;
-      animation: settle 800ms var(--ease-out) 0.15s both, bob 6.5s var(--ease-in-out) 1.2s infinite;
+      transform: rotate(4.5deg);
+      animation: story-bob-alt 6.5s var(--ease-in-out) 0.4s infinite;
     }
     .story h2 { max-width: 12em; }
     .story p { margin-top: 14px; color: var(--mute); max-width: 32em; }
@@ -626,6 +651,14 @@
       0%, 100% { box-shadow: 0 0 0 3px var(--leaf-soft); }
       50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--leaf-soft) 40%, transparent); }
     }
+    @keyframes story-bob {
+      0%, 100% { transform: rotate(-2.5deg) translateY(0); }
+      50% { transform: rotate(-2.5deg) translateY(-5px); }
+    }
+    @keyframes story-bob-alt {
+      0%, 100% { transform: rotate(4.5deg) translateY(0); }
+      50% { transform: rotate(4.5deg) translateY(-4px); }
+    }
 
     @media (max-width: 900px) {
       .why-grid, .how-layout, .story { grid-template-columns: 1fr; }
@@ -634,22 +667,24 @@
       .scatter-item:nth-child(4) { display: none; }
       .scatter-item:nth-child(1) { top: 14%; right: 4%; width: 34vw; }
       .scatter-item:nth-child(2) { top: 22%; right: 38%; width: 26vw; }
-      .story-stack { min-height: 300px; }
-      .sf1 { position: relative; width: 100%; max-width: 420px; left: auto; top: auto; }
+      .story-stack { width: min(100%, 420px); }
       .sf2 { display: none; }
+      .sf1 { width: 100%; transform: none; animation: none; }
       section { padding: 64px 0; }
+      #story { padding-bottom: 64px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      .btn, .nav-cta, .seg-pill, .cabinet-q, .reveal { transition: none; }
-      .hero-photo, .scatter-item, .place-row, .story-frame,
+      .btn, .nav-cta, .seg-pill, .cabinet-q, .reveal,
+      .how-step, .how-n, .place-row { transition: none; }
+      .hero-photo, .scatter-item, .story-frame,
       .hero-brand, .hero h1, .hero .lede, .hero-actions, .tray {
         animation: none !important;
       }
       .reveal { opacity: 1; transform: none; }
-      .place-row { opacity: 1; transform: none; }
-      .sf1, .sf2 { transform: none; }
+      .how-step, .how-n, .place-row { opacity: 1; transform: none; }
+      .sf1, .sf2 { transform: none; animation: none !important; }
     }
   </style>
 </head>
@@ -755,22 +790,22 @@
           Nothing gets uploaded for you. Files stay where they already are — Memories just helps you see them clearly.
         </p>
         <div class="how-layout">
-          <div class="how">
-            <article class="how-step reveal">
+          <div class="how" id="how-steps">
+            <article class="how-step">
               <span class="how-n">1</span>
               <div>
                 <h3>Add the places you keep things</h3>
                 <p>A Pictures folder. The camera on your phone. A family hard drive. Pick them once — Memories remembers what’s there.</p>
               </div>
             </article>
-            <article class="how-step reveal reveal-delay-1">
+            <article class="how-step">
               <span class="how-n">2</span>
               <div>
                 <h3>Look the way you’re thinking</h3>
                 <p>Switch Type or Date anytime, even after you’ve opened a group. Moments gathers photos and videos from the same day.</p>
               </div>
             </article>
-            <article class="how-step reveal reveal-delay-2">
+            <article class="how-step">
               <span class="how-n">3</span>
               <div>
                 <h3>Copy a spare when you want one</h3>
@@ -778,7 +813,7 @@
               </div>
             </article>
           </div>
-          <div class="places-card reveal reveal-delay-1" aria-hidden="true">
+          <div class="places-card" id="places-demo" aria-hidden="true">
             <div class="place-row">
               <span class="place-ico"><svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 14.5z M9 20h6 M12 16v4"/></svg></span>
               <strong>This Mac · Pictures</strong>
@@ -922,9 +957,9 @@
           },
           { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
         );
-        document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+        document.querySelectorAll(".reveal, #how-steps, #places-demo").forEach((el) => io.observe(el));
       } else {
-        document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in"));
+        document.querySelectorAll(".reveal, #how-steps, #places-demo").forEach((el) => el.classList.add("in"));
       }
     })();
   </script>
