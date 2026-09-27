@@ -1,0 +1,6 @@
+# Keep the Vercel preview lean — desktop app, fixtures and local HTML mocks are not needed.
+apps
+fixtures
+app
+product.html
+.git
