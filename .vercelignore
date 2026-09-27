@@ -1,6 +1,6 @@
-# Keep the Vercel preview lean — desktop app, fixtures and local HTML mocks are not needed.
+# Keep the Vercel preview lean — desktop app, fixtures and the old HTML mock are not needed.
+# product.html is kept so the landing page can be copied into the static output.
 apps
 fixtures
 app
-product.html
 .git
