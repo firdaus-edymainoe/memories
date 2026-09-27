@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build -w @memories/ui",
+  "outputDirectory": "packages/ui/dist",
+  "env": {
+    "VITE_MEMORIES_DEMO": "true"
+  },
+  "build": {
+    "env": {
+      "VITE_MEMORIES_DEMO": "true"
+    }
+  }
+}

@@ -1,216 +1,46 @@
 import type { MemoriesClient } from "@memories/client";
-import type {
-  BackupJob,
-  DirEntry,
-  Drive,
-  DriveKind,
-  EventCluster,
-  FileDetail,
-  FileKind,
-  LibraryFile,
-  VirtualFolder,
-  VolumePresence,
-} from "@memories/core";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { applyTheme, chromePlatform, readThemePref, saveThemePref, type ThemePref } from "./theme.js";
+import type { BackupJob, DirEntry, Drive, DriveKind, EventCluster, FileDetail, LibraryFile, VolumePresence } from "@memories/core";
+import { AnimatePresence, LayoutGroup, motion, MotionConfig } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { BackupHome, BackupWizard, toggleFolder, type BackupResult } from "./Backup.js";
+import {
+  dayLabel,
+  DOC_NAV,
+  EXTRA_SHELVES,
+  FAMILY,
+  familyOf,
+  formatSize,
+  isPhonePath,
+  monthLabel,
+  pathLeaf,
+  placeStatus,
+  plural,
+  PRIMARY_SHELVES,
+  SHELF,
+  shortDate,
+  type Family,
+  type Shelf,
+} from "./files.js";
+import { Icon, type IconName } from "./icons.js";
+import { Library, type Lens, type Scope } from "./Library.js";
+import { AddPlaceDialog, PlaceBrowser, PlacesHome, type BrowseLens } from "./Places.js";
+import { CopyToMenu, Facts, FilePreview, Inspector, kindLine, Viewer } from "./Preview.js";
+import { Settings } from "./Settings.js";
+import { applyTheme, chromePlatform, readThemePref, resolvedTheme, saveThemePref, type ThemePref } from "./theme.js";
+import { Welcome } from "./Welcome.js";
 
-type Screen = "browse" | "events" | "inbox" | "drives" | "backup" | "settings";
+type Screen = "library" | "places" | "backup" | "settings";
+type View = "tiles" | "list";
 
-const TOUR = [
-  {
-    title: "This is a file manager.",
-    body: "For the disks you already own — this computer, an SSD, a USB stick, a phone. A drive is a folder you choose, not the whole disk.",
-  },
-  {
-    title: "Those files show up here.",
-    body: "Images, videos, and documents, by date. Photos and videos also as events, by day and place.",
-  },
-  {
-    title: "A drive is a folder you choose.",
-    body: "Photos on this Mac. Camera on the phone. A folder on an SSD. Plug in, unlock, pick the folder. Memories remembers what’s in it. The files stay put.",
-  },
-  {
-    title: "Backup is a separate step.",
-    body: "Open folders on a drive, check the ones to copy, then pick a disk. Plug both in, then Start. Originals stay where they are.",
-  },
-  {
-    title: "Unplug later. The catalog stays.",
-    body: "Memories still shows what you have, and which folder it lives in. Plug the drive back in when you want to open or copy a file.",
-  },
-];
+const spring = { type: "spring", duration: 0.4, bounce: 0.15 } as const;
 
-const TOUR_THUMBS = [
-  "https://images.unsplash.com/photo-1519741497674-611481863552?w=240&q=70",
-  "https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=240&q=70",
-  "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=240&q=70",
-  "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=240&q=70",
-  "https://images.unsplash.com/photo-1556912173-46c336c7fd55?w=240&q=70",
-  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=240&q=70",
-];
-
-function TourScene({ step }: { step: number }) {
-  if (step === 0) {
-    return (
-      <div className="scene scene-welcome" aria-hidden="true">
-        {TOUR_THUMBS.slice(0, 3).map((src, i) => (
-          <figure className="print" style={{ ["--i" as string]: i }} key={src}>
-            <img alt="" width={160} height={120} src={src} />
-          </figure>
-        ))}
-      </div>
-    );
+function readPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const value = localStorage.getItem(key) as T | null;
+    return value && allowed.includes(value) ? value : fallback;
+  } catch {
+    return fallback;
   }
-  if (step === 1) {
-    const groups = [
-      { name: "Images", n: 4 },
-      { name: "Videos", n: 2 },
-      { name: "Documents", n: 2 },
-      { name: "Events", n: 3 },
-    ];
-    return (
-      <div className="scene scene-files" aria-hidden="true">
-        {groups.map((group, gi) => (
-          <div className="g" style={{ ["--g" as string]: gi }} key={group.name}>
-            <strong>{group.name}</strong>
-            <div className="tiles">
-              {Array.from({ length: group.n }, (_, i) =>
-                group.name === "Documents" ? (
-                  <i className="doc" style={{ ["--i" as string]: i }} key={i}>
-                    PDF
-                  </i>
-                ) : (
-                  <img
-                    alt=""
-                    width={56}
-                    height={56}
-                    style={{ ["--i" as string]: i }}
-                    src={TOUR_THUMBS[(gi + i) % TOUR_THUMBS.length]}
-                    key={i}
-                  />
-                ),
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (step === 2) {
-    const drives = [
-      { name: "This Mac · Photos", on: true, color: "#3B82F6" },
-      { name: "Android · Camera", on: true, color: "#10B981" },
-      { name: "Summer SSD", on: false, color: "#F59E0B" },
-      { name: "Travel USB", on: false, color: "#8B5CF6" },
-    ];
-    return (
-      <div className="scene scene-drives" aria-hidden="true">
-        {drives.map((drive, i) => (
-          <div className={`drv${drive.on ? " live" : " wait"}`} style={{ ["--i" as string]: i }} key={drive.name}>
-            <span className="dot" style={{ background: drive.color }} />
-            <strong>{drive.name}</strong>
-            <em className="st-off">Not connected</em>
-            <em className="st-on">Connected</em>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (step === 3) {
-    return (
-      <div className="scene scene-copy" aria-hidden="true">
-        <div className="card">
-          <img alt="" width={280} height={180} src={TOUR_THUMBS[0]} />
-        <div className="meta">
-          <b>First dance.jpg</b>
-          <span>Wedding · 12 Aug 2025</span>
-        </div>
-        <div className="chips">
-          <span className="c c1">Camera</span>
-          <span className="c c2">Summer SSD</span>
-          <span className="c c3">Copying 62%</span>
-        </div>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="scene scene-cloud" aria-hidden="true">
-      <div className="card">
-        <img alt="" width={280} height={180} src={TOUR_THUMBS[0]} />
-        <div className="meta">
-          <b>First dance.jpg</b>
-          <span>Same file. Still here after you unplug.</span>
-        </div>
-        <div className="chips">
-          <span className="c">This Mac · Photos</span>
-          <span className="c">Summer SSD</span>
-          <span className="c optional">USB · when plugged in</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const KIND_LABEL: Record<FileKind, string> = {
-  photo: "Images",
-  video: "Videos",
-  document: "Documents",
-};
-
-function monthLabel(iso: string | null) {
-  if (!iso) return "Unknown date";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso.slice(0, 7);
-  return date.toLocaleString("en-GB", { month: "long", year: "numeric" });
-}
-
-function dayLabel(day: string) {
-  const date = new Date(`${day}T00:00:00`);
-  return date.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-}
-
-function formatSize(bytes: number | undefined) {
-  if (!bytes) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function isPhoneVolume(volume: VolumePresence) {
-  return volume.mountPath.startsWith("adb://") || volume.mountPath.startsWith("mtp://");
-}
-
-function folderLabel(drive: Drive, path: string) {
-  const parts = path.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? drive.name;
-}
-
-function pathLeaf(path: string) {
-  const parts = path.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
-function backupFolderCovered(selected: string[], path: string) {
-  return selected.some((folder) => folder === "" || path === folder || path.startsWith(`${folder}/`));
-}
-
-function toggleBackupFolder(selected: string[], path: string) {
-  if (selected.includes(path)) return selected.filter((item) => item !== path);
-  return [
-    ...selected.filter((item) => {
-      if (path === "") return false;
-      if (item === "") return false;
-      if (item.startsWith(`${path}/`)) return false;
-      if (path.startsWith(`${item}/`)) return false;
-      return true;
-    }),
-    path,
-  ];
-}
-
-function backupPathLabel(path: string, driveName: string) {
-  return path ? path.split("/").filter(Boolean).join(" / ") : driveName;
 }
 
 function joinMount(mountPath: string, relativePath: string) {
@@ -218,149 +48,9 @@ function joinMount(mountPath: string, relativePath: string) {
   return `${mountPath.replace(/\/$/, "")}/${relativePath}`;
 }
 
-function phoneFolderLabel(rootPath: string) {
-  const folder = rootPath.replace(/^mtp:\/\/[^/]+\/?/, "").replace(/^adb:\/\/[^/]+\/?/, "");
-  return folder || "Android phone";
-}
-
-function fileExt(name: string) {
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
-
-function previewKind(name: string, kind: FileKind | null): "image" | "video" | "audio" | "pdf" | "text" | "file" {
-  const ext = fileExt(name);
-  if (kind === "photo" || ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(ext)) return "image";
-  if (kind === "video" || ["mp4", "mov", "m4v", "webm"].includes(ext)) return "video";
-  if (["mp3", "m4a", "wav", "aac", "ogg"].includes(ext)) return "audio";
-  if (ext === "pdf") return "pdf";
-  if (["txt", "md", "json", "csv"].includes(ext)) return "text";
-  return "file";
-}
-
 function needsPhoneConfirm(drive: Drive, entry: DirEntry) {
   if (drive.kind !== "phone") return false;
-  if (entry.kind === "video") return true;
-  if (entry.size > 20 * 1024 * 1024) return true;
-  return false;
-}
-
-function FilePreview({
-  name,
-  kind,
-  src,
-  fit,
-}: {
-  name: string;
-  kind: FileKind | null;
-  src: string | null;
-  fit: "inspector" | "viewer";
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
-  const mode = previewKind(name, kind);
-  const label = mode === "pdf" ? "PDF" : (kind ?? "file").toUpperCase();
-  if (!src) {
-    return <div className="doc-preview">{label}</div>;
-  }
-  if (mode === "image") {
-    return (
-      <>
-        <img src={src} alt={fit === "viewer" ? name : ""} onError={() => setFailed(true)} />
-        {failed ? <div className="doc-preview">Can’t preview</div> : null}
-      </>
-    );
-  }
-  if (failed) {
-    return <div className="doc-preview">Can’t preview</div>;
-  }
-  if (mode === "video") {
-    return <video src={src} controls playsInline onError={() => setFailed(true)} />;
-  }
-  if (mode === "audio") {
-    return (
-      <div className="doc-preview">
-        <audio src={src} controls onError={() => setFailed(true)} />
-      </div>
-    );
-  }
-  if (mode === "pdf" || mode === "text") {
-    return <iframe title={name} src={src} />;
-  }
-  return <div className="doc-preview">{label}</div>;
-}
-
-const WAIT_READ = [
-  "Waiting on the phone…",
-  "Listing names over USB…",
-  "This folder is large. Still reading.",
-  "You can go back. We’ll keep the light on.",
-];
-const WAIT_INDEX = [
-  "Files stay on this drive. Memories just remembers them.",
-  "Hashing over USB takes a while.",
-  "Big folders are a slow river.",
-  "Leave this screen if you like. This continues.",
-];
-
-function FolderWait({ name, mode }: { name: string; mode: "read" | "index" }) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), 4200);
-    return () => window.clearInterval(id);
-  }, []);
-  const lines = mode === "index" ? WAIT_INDEX : WAIT_READ;
-  const line = lines[Math.min(tick, lines.length - 1)]!;
-  const egg = tick >= 3;
-  return (
-    <div
-      className={`folder-wait${mode === "index" ? " overlay" : ""}`}
-      role="status"
-      aria-live="polite"
-      aria-busy="true"
-      data-testid="folder-wait"
-    >
-      <div className={`polaroids${egg ? " egg" : ""}`} aria-hidden="true">
-        <div className="polaroid back" />
-        <div className="polaroid mid" />
-        <div className="polaroid front">
-          <div className="develop">
-            <svg viewBox="0 0 80 58" fill="none">
-              <rect width="80" height="58" fill="#8fa4bc" />
-              <circle cx="58" cy="16" r="8" fill="#f4e4b2" />
-              <path d="M0 40l18-12 14 10 16-18 32 22v16H0z" fill="#5d6f82" />
-              <path d="M0 48l22-8 12 6 20-14 26 12v14H0z" fill="#3f4d5c" />
-            </svg>
-          </div>
-          {egg ? <span className="polaroid-note">still in the tray</span> : null}
-        </div>
-      </div>
-      <div className="folder-wait-copy">
-        <h2>{mode === "index" ? `Using ${name}` : `Reading ${name}`}</h2>
-        <p>{line}</p>
-      </div>
-    </div>
-  );
-}
-
-function icon(name: string) {
-  const d: Record<string, string> = {
-    photo: "M4 7h3l2-2h6l2 2h3v10H4z M12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
-    video: "M4 6h10v12H4z M14 10l6-3v10l-6-3z",
-    doc: "M7 4h7l5 5v11H7z M14 4v5h5",
-    folder: "M3 7h6l2 2h10v10H3z",
-    events: "M5 5h14v14H5z M5 9h14 M9 5v4",
-    inbox: "M4 6h16v12H4z M4 10h16",
-    drive: "M4 8h16v10H4z M8 18v2 M16 18v2",
-    user: "M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4z M4 20a8 8 0 0 1 16 0",
-  };
-  return (
-    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d={d[name] || d.drive} />
-    </svg>
-  );
+  return entry.kind === "video" || entry.size > 20 * 1024 * 1024;
 }
 
 function WindowControls() {
@@ -374,16 +64,12 @@ function WindowControls() {
   if (chromePlatform() !== "win32") return null;
   return (
     <div className="win-controls">
-      <button type="button" aria-label="Minimize" onClick={() => chrome.minimize?.()}>
+      <button type="button" aria-label="Minimize" onClick={() => chrome?.minimize?.()}>
         <svg viewBox="0 0 10 10" aria-hidden="true">
           <path d="M1 5h8" />
         </svg>
       </button>
-      <button
-        type="button"
-        aria-label={maximized ? "Restore" : "Maximize"}
-        onClick={() => chrome.toggleMaximize?.()}
-      >
+      <button type="button" aria-label={maximized ? "Restore" : "Maximize"} onClick={() => chrome?.toggleMaximize?.()}>
         {maximized ? (
           <svg viewBox="0 0 10 10" aria-hidden="true">
             <path d="M3 3.5h5.5V9H3z M1.5 1h5.5v1.5" />
@@ -394,7 +80,7 @@ function WindowControls() {
           </svg>
         )}
       </button>
-      <button type="button" className="win-close" aria-label="Close" onClick={() => chrome.close?.()}>
+      <button type="button" className="win-close" aria-label="Close" onClick={() => chrome?.close?.()}>
         <svg viewBox="0 0 10 10" aria-hidden="true">
           <path d="M2 2l6 6M8 2l-6 6" />
         </svg>
@@ -403,27 +89,112 @@ function WindowControls() {
   );
 }
 
+function Segmented<T extends string>({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: T;
+  options: { value: T; label: string; icon?: IconName }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="seg" role="radiogroup" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          aria-label={option.icon ? option.label : undefined}
+          title={option.icon ? option.label : undefined}
+          className={value === option.value ? "on" : ""}
+          onClick={() => onChange(option.value)}
+        >
+          {value === option.value ? <motion.i layoutId={`seg-${id}`} className="seg-pill" transition={spring} /> : null}
+          <span>{option.icon ? <Icon name={option.icon} size={16} /> : option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NavItem({
+  active,
+  icon,
+  label,
+  badge,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  icon?: IconName;
+  label: string;
+  badge?: number;
+  onClick: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <button type="button" className={`nav-item${active ? " active" : ""}`} aria-current={active ? "page" : undefined} onClick={onClick}>
+      {active ? <motion.i layoutId="nav-pill" className="nav-pill" transition={spring} /> : null}
+      {children ?? (icon ? <Icon name={icon} size={18} /> : null)}
+      <span className="nav-text">{label}</span>
+      <AnimatePresence>
+        {badge ? (
+          <motion.span
+            className="badge"
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.6 }}
+            transition={spring}
+          >
+            {badge}
+          </motion.span>
+        ) : null}
+      </AnimatePresence>
+    </button>
+  );
+}
+
 export function MemoriesApp({ client }: { client: MemoriesClient }) {
-  const [onboarded, setOnboarded] = useState(() => localStorage.getItem("memories-tour") === "1");
-  const [step, setStep] = useState(0);
-  const [screen, setScreen] = useState<Screen>("browse");
-  const [typeFilter, setTypeFilter] = useState<FileKind>("photo");
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomeKey, setWelcomeKey] = useState(0);
+  const [screen, setScreen] = useState<Screen>("library");
+  const [lens, setLens] = useState<Lens>(() => readPref("memories-lens", ["type", "date", "moments"] as const, "type"));
+  const [view, setView] = useState<View>(() => readPref("memories-view", ["tiles", "list"] as const, "tiles"));
+  const [scope, setScope] = useState<Scope>({});
+  const [search, setSearch] = useState("");
   const [drives, setDrives] = useState<Drive[]>([]);
   const [volumes, setVolumes] = useState<VolumePresence[]>([]);
   const [files, setFiles] = useState<LibraryFile[]>([]);
   const [events, setEvents] = useState<EventCluster[]>([]);
   const [jobs, setJobs] = useState<BackupJob[]>([]);
-  const [folders, setFolders] = useState<VirtualFolder[]>([]);
-  const [inboxCount, setInboxCount] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<FileDetail | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<"register" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [regName, setRegName] = useState("This computer");
-  const [regKind, setRegKind] = useState<DriveKind>("computer");
-  const [regPath, setRegPath] = useState("");
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
+
+  const [browseDrive, setBrowseDrive] = useState<Drive | null>(null);
+  const [pickerVolume, setPickerVolume] = useState<VolumePresence | null>(null);
+  const [browsePath, setBrowsePath] = useState("");
+  const [browseEntries, setBrowseEntries] = useState<DirEntry[]>([]);
+  const [browseBusy, setBrowseBusy] = useState(false);
+  const [browseAdding, setBrowseAdding] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browseFile, setBrowseFile] = useState<DirEntry | null>(null);
+  const [browseLoad, setBrowseLoad] = useState(false);
+  const [browseViewer, setBrowseViewer] = useState(false);
+  const [browseLens, setBrowseLens] = useState<BrowseLens>("folders");
+
   const [bkSetup, setBkSetup] = useState(false);
   const [bkStep, setBkStep] = useState(0);
   const [bkSource, setBkSource] = useState("");
@@ -433,18 +204,11 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [bkEntries, setBkEntries] = useState<DirEntry[]>([]);
   const [bkBusy, setBkBusy] = useState(false);
   const [bkError, setBkError] = useState<string | null>(null);
-  const [drawer, setDrawer] = useState(false);
-  const [browseDrive, setBrowseDrive] = useState<Drive | null>(null);
-  const [browsePath, setBrowsePath] = useState("");
-  const [browseEntries, setBrowseEntries] = useState<DirEntry[]>([]);
-  const [browseBusy, setBrowseBusy] = useState(false);
-  const [browseWait, setBrowseWait] = useState<"read" | "index" | null>(null);
-  const [browseError, setBrowseError] = useState<string | null>(null);
-  const [browseFile, setBrowseFile] = useState<DirEntry | null>(null);
-  const [browseViewer, setBrowseViewer] = useState(false);
-  const [browseLoad, setBrowseLoad] = useState(false);
-  const [pickerVolume, setPickerVolume] = useState<VolumePresence | null>(null);
-  const [themePref, setThemePref] = useState<ThemePref>(readThemePref);
+  const [bkRunning, setBkRunning] = useState<string | null>(null);
+  const [bkResult, setBkResult] = useState<BackupResult | null>(null);
+  const [docsOpen, setDocsOpen] = useState(false);
+
+  const searchRef = useRef<HTMLInputElement>(null);
   const windowChrome = chromePlatform();
 
   useEffect(() => {
@@ -456,77 +220,78 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     return () => media.removeEventListener("change", onChange);
   }, [themePref]);
 
-  const show = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 2200);
+  const show = useCallback((text: string) => {
+    const id = Date.now();
+    setToast({ id, text });
+    window.setTimeout(() => setToast((current) => (current?.id === id ? null : current)), 2600);
   }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const [nextDrives, nextVolumes, nextFiles, nextEvents, nextJobs, nextFolders, inboxFiles] = await Promise.all([
+      const [nextDrives, nextVolumes, nextFiles, nextEvents, nextJobs] = await Promise.all([
         client.drives(),
         client.volumes(),
-        client.files(screen === "inbox" ? { inbox: true } : screen === "browse" ? { kind: typeFilter } : {}),
+        client.files({}),
         client.events(),
         client.backups(),
-        client.folders(),
-        client.files({ inbox: true }),
       ]);
       setDrives(nextDrives);
       setVolumes(nextVolumes);
       setFiles(nextFiles);
       setEvents(nextEvents);
       setJobs(nextJobs);
-      setFolders(nextFolders);
-      setInboxCount(inboxFiles.length);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reach Memories");
+      setError(err instanceof Error ? err.message : "Memories isn’t responding");
+    } finally {
+      setLoaded(true);
     }
-  }, [client, screen, typeFilter]);
+  }, [client]);
 
   useEffect(() => {
-    if (!onboarded) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [nextDrives, nextVolumes, nextFiles, nextEvents, nextJobs, nextFolders, inboxFiles] = await Promise.all([
-          client.drives(),
-          client.volumes(),
-          client.files(screen === "inbox" ? { inbox: true } : screen === "browse" ? { kind: typeFilter } : {}),
-          client.events(),
-          client.backups(),
-          client.folders(),
-          client.files({ inbox: true }),
-        ]);
-        if (cancelled) return;
-        setDrives(nextDrives);
-        setVolumes(nextVolumes);
-        setFiles(nextFiles);
-        setEvents(nextEvents);
-        setJobs(nextJobs);
-        setFolders(nextFolders);
-        setInboxCount(inboxFiles.length);
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not reach Memories");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [onboarded, client, screen, typeFilter]);
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if ((screen !== "places" && screen !== "backup") || browseDrive || pickerVolume) return;
+    const timer = window.setInterval(() => void refresh(), 4000);
+    return () => window.clearInterval(timer);
+  }, [screen, refresh, browseDrive, pickerVolume]);
 
   useEffect(() => {
     if (!selected) {
       setDetail(null);
       return;
     }
-    void client.file(selected).then(setDetail).catch(() => setDetail(null));
+    let live = true;
+    void client
+      .file(selected)
+      .then((next) => live && setDetail(next))
+      .catch(() => live && setDetail(null));
+    return () => {
+      live = false;
+    };
   }, [client, selected, files]);
 
-  const phones = useMemo(() => volumes.filter(isPhoneVolume), [volumes]);
-  const uniqueDrives = useMemo(() => {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && screen === "library") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [screen]);
+
+  useEffect(() => {
+    const close = () => window.innerWidth >= 860 && setDrawer(false);
+    window.addEventListener("resize", close);
+    return () => window.removeEventListener("resize", close);
+  }, []);
+
+  const phones = useMemo(() => volumes.filter((volume) => isPhonePath(volume.mountPath)), [volumes]);
+  const places = useMemo(() => {
     const seen = new Set<string>();
     return drives.filter((drive) => {
       const key = `${drive.volumeId}::${drive.rootPath}`;
@@ -535,210 +300,197 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
       return true;
     });
   }, [drives]);
-
-  useEffect(() => {
-    if (screen !== "drives") {
-      setBrowseDrive(null);
-      setPickerVolume(null);
-      setBrowsePath("");
-      setBrowseEntries([]);
-      setBrowseError(null);
-      setBrowseBusy(false);
-      setBrowseWait(null);
-    }
-    if (screen !== "backup") setBkSetup(false);
-  }, [screen]);
-
-  useEffect(() => {
-    if (!onboarded || (screen !== "drives" && screen !== "backup") || browseDrive) return;
-    const timer = window.setInterval(() => void refresh(), 4000);
-    return () => window.clearInterval(timer);
-  }, [onboarded, screen, refresh, browseDrive]);
-
-  useEffect(() => {
-    const close = () => {
-      if (window.innerWidth >= 960) setDrawer(false);
-    };
-    window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
-  }, []);
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, LibraryFile[]>();
+  const shelfCounts = useMemo(() => {
+    const counts: Partial<Record<Shelf, number>> = {};
     for (const file of files) {
-      const key = monthLabel(file.takenAt);
-      const list = map.get(key) ?? [];
-      list.push(file);
-      map.set(key, list);
+      const shelf = FAMILY[familyOf(file.name, file.kind)].shelf;
+      counts[shelf] = (counts[shelf] ?? 0) + 1;
     }
-    return [...map.entries()];
+    return counts;
+  }, [files]);
+  const familyCounts = useMemo(() => {
+    const counts: Partial<Record<Family, number>> = {};
+    for (const file of files) {
+      const family = familyOf(file.name, file.kind);
+      counts[family] = (counts[family] ?? 0) + 1;
+    }
+    return counts;
   }, [files]);
 
-  const finishTour = () => {
-    localStorage.setItem("memories-tour", "1");
-    setOnboarded(true);
-  };
+  useEffect(() => {
+    if (screen === "library" && scope.shelf === "documents") setDocsOpen(true);
+  }, [screen, scope.shelf]);
 
-  async function onRegister() {
+  function resetBrowse() {
+    setBrowseDrive(null);
+    setPickerVolume(null);
+    setBrowsePath("");
+    setBrowseEntries([]);
+    setBrowseError(null);
+    setBrowseBusy(false);
+    setBrowseAdding(false);
+    setBrowseFile(null);
+    setBrowseViewer(false);
+  }
+
+  function go(next: Screen) {
+    setScreen(next);
+    setDrawer(false);
+    setSelected(null);
+    if (next !== "places") resetBrowse();
+    if (next !== "backup") setBkSetup(false);
+  }
+
+  function openLibrary(nextScope: Scope, nextLens?: Lens) {
+    go("library");
+    setScope(nextScope);
+    setSearch("");
+    if (nextLens) changeLens(nextLens);
+    else if (lens === "moments") changeLens("type");
+  }
+
+  function changeLens(next: Lens) {
+    setLens(next);
     try {
-      const drive = await client.registerDrive({ name: regName, kind: regKind, rootPath: regPath });
-      await client.ingest(drive.id);
-      setModal(null);
-      show(`${drive.name} is a drive`);
-      await refresh();
-    } catch (err) {
-      show(err instanceof Error ? err.message : "Could not register drive");
+      localStorage.setItem("memories-lens", next);
+    } catch {
+      /* private mode */
     }
   }
 
-  async function openPicker(volume: VolumePresence) {
-    setModal(null);
-    setPickerVolume(volume);
-    setBrowseDrive(null);
+  function changeView(next: View) {
+    setView(next);
+    try {
+      localStorage.setItem("memories-view", next);
+    } catch {
+      /* private mode */
+    }
+  }
+
+  function openWelcomeTour() {
+    setWelcomeKey((key) => key + 1);
+    setShowWelcome(true);
+    setDrawer(false);
+  }
+
+  function finishWelcome(start: boolean) {
+    setShowWelcome(false);
+    if (start && !places.length) setAdding(true);
+  }
+
+  async function listEntries(load: () => Promise<DirEntry[]>, path: string) {
+    setBrowseBusy(true);
+    setBrowsePath(path);
+    setBrowseError(null);
+    setBrowseEntries([]);
     setBrowseFile(null);
     setBrowseViewer(false);
-    setScreen("drives");
+    setBrowseLoad(false);
+    try {
+      setBrowseEntries(await load());
+    } catch (err) {
+      setBrowseError(err instanceof Error ? err.message : "Something got in the way.");
+    } finally {
+      setBrowseBusy(false);
+    }
+  }
+
+  const loadPicker = (volume: VolumePresence, path: string) => listEntries(() => client.volumeEntries(volume.mountPath, path), path);
+  const loadBrowse = (drive: Drive, path: string) => listEntries(() => client.driveEntries(drive.id, path), path);
+
+  async function openPicker(volume: VolumePresence) {
+    setAdding(false);
+    go("places");
+    setPickerVolume(volume);
+    setBrowseDrive(null);
     await loadPicker(volume, "");
   }
 
-  async function onUseFolder() {
+  async function openPlace(drive: Drive) {
+    if (!drive.online) {
+      show(drive.kind === "computer" ? `Can’t find ${drive.name} right now` : `Plug in ${drive.name} to open it`);
+      return;
+    }
+    go("places");
+    setPickerVolume(null);
+    setBrowseDrive(drive);
+    await loadBrowse(drive, "");
+  }
+
+  async function onUsePhoneFolder() {
     if (!pickerVolume) return;
     const rootPath = joinMount(pickerVolume.mountPath, browsePath);
     const name = browsePath ? `${pickerVolume.label} · ${pathLeaf(browsePath)}` : pickerVolume.label;
     setBrowseBusy(true);
-    setBrowseWait("index");
+    setBrowseAdding(true);
     try {
-      const drive = await client.registerDrive({
-        name,
-        kind: "phone",
-        rootPath,
-        volumeId: pickerVolume.volumeId,
-      });
+      const drive = await client.registerDrive({ name, kind: "phone", rootPath, volumeId: pickerVolume.volumeId });
       await client.ingest(drive.id);
       setPickerVolume(null);
-      show(`${drive.name} is a drive`);
+      show(`Added ${drive.name}`);
       await refresh();
-      await openBrowse(drive);
+      setBrowseAdding(false);
+      setBrowseDrive(drive);
+      await loadBrowse(drive, "");
     } catch (err) {
-      show(err instanceof Error ? err.message : "Could not use this folder");
+      show(err instanceof Error ? err.message : "Couldn’t add this folder");
     } finally {
       setBrowseBusy(false);
-      setBrowseWait(null);
+      setBrowseAdding(false);
     }
   }
 
-  async function openBrowse(drive: Drive) {
-    if (!drive.online) {
-      show("Connect the drive to browse it");
-      return;
-    }
-    setPickerVolume(null);
-    setBrowseDrive(drive);
-    setBrowseFile(null);
-    setBrowseViewer(false);
-    await loadBrowse(drive.id, "");
-  }
-
-  async function loadPicker(volume: VolumePresence, relativePath: string) {
-    setBrowseBusy(true);
-    setBrowseWait("read");
-    setBrowsePath(relativePath);
-    setBrowseError(null);
-    setBrowseEntries([]);
-    setBrowseFile(null);
-    setBrowseViewer(false);
-    setBrowseLoad(false);
+  async function onAddPlace(input: { name: string; kind: DriveKind; rootPath: string }) {
     try {
-      setBrowseEntries(await client.volumeEntries(volume.mountPath, relativePath));
+      setAdding(false);
+      show(`Adding ${input.name}…`);
+      const drive = await client.registerDrive(input);
+      await client.ingest(drive.id);
+      show(`Added ${drive.name}`);
+      await refresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not list folder";
-      setBrowseError(message);
-      show(message);
-      setBrowseEntries([]);
-    } finally {
-      setBrowseBusy(false);
-      setBrowseWait(null);
+      show(err instanceof Error ? err.message : "Couldn’t add this place");
     }
   }
 
-  async function loadBrowse(driveId: string, relativePath: string) {
-    setBrowseBusy(true);
-    setBrowseWait("read");
-    setBrowsePath(relativePath);
-    setBrowseError(null);
-    setBrowseEntries([]);
-    setBrowseFile(null);
-    setBrowseViewer(false);
-    setBrowseLoad(false);
+  async function pickFolder() {
     try {
-      setBrowseEntries(await client.driveEntries(driveId, relativePath));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not list folder";
-      setBrowseError(message);
-      show(message);
-      setBrowseEntries([]);
-    } finally {
-      setBrowseBusy(false);
-      setBrowseWait(null);
-    }
-  }
-
-  function pickBrowseFile(entry: DirEntry) {
-    if (!browseDrive) return;
-    setBrowseFile(entry);
-    setBrowseViewer(false);
-    setBrowseLoad(!needsPhoneConfirm(browseDrive, entry));
-  }
-
-  function openBrowseFile(entry: DirEntry) {
-    if (!browseDrive) return;
-    setBrowseFile(entry);
-    setBrowseLoad(true);
-    setBrowseViewer(true);
-  }
-
-  async function onPickFolder() {
-    try {
-      const picked = await client.pickFolder();
-      if (picked) setRegPath(picked);
+      return await client.pickFolder();
     } catch {
-      const typed = window.prompt("Folder to register as a drive", regPath);
-      if (typed) setRegPath(typed);
+      return null;
     }
   }
 
-  async function loadBkFolders(driveId: string, relativePath: string) {
+  async function loadBkFolders(driveId: string, path: string) {
     setBkBusy(true);
-    setBkPath(relativePath);
+    setBkPath(path);
     setBkError(null);
     setBkEntries([]);
     try {
-      const entries = await client.driveEntries(driveId, relativePath);
+      const entries = await client.driveEntries(driveId, path);
       setBkEntries(entries.filter((entry) => entry.directory));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not list folder";
-      setBkError(message);
-      show(message);
+      setBkError(err instanceof Error ? err.message : "");
     } finally {
       setBkBusy(false);
     }
   }
 
-  function startBackup(sourceId = "") {
+  function startBackup(source?: Drive) {
+    go("backup");
     setBkSetup(true);
-    setBkStep(sourceId ? 1 : 0);
-    setBkSource(sourceId);
+    setBkStep(0);
+    setBkSource("");
     setBkDest("");
     setBkFolders([]);
     setBkPath("");
     setBkEntries([]);
-    setBkError(null);
-    if (sourceId) void loadBkFolders(sourceId, "");
+    if (source) void pickBkSource(source);
   }
 
   async function pickBkSource(drive: Drive) {
     if (!drive.online) {
-      show("Connect the drive to list folders");
+      show(`Plug in ${drive.name} to choose its folders`);
       return;
     }
     setBkSource(drive.id);
@@ -750,935 +502,686 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
 
   async function onSaveBackup() {
     try {
-      await client.saveBackup({
-        sourceDriveId: bkSource,
-        destDriveId: bkDest,
-        sourceRelativePaths: bkFolders,
-      });
+      await client.saveBackup({ sourceDriveId: bkSource, destDriveId: bkDest, sourceRelativePaths: bkFolders });
       setBkSetup(false);
       show("Backup saved");
-      setScreen("backup");
       await refresh();
     } catch (err) {
-      show(err instanceof Error ? err.message : "Could not save backup");
+      show(err instanceof Error ? err.message : "Couldn’t save this backup");
     }
   }
 
   async function onRunBackup(id: string) {
+    setBkRunning(id);
+    setBkResult(null);
     try {
       const result = await client.runBackup(id);
-      show(`Copied ${result.copied}, skipped ${result.skipped}`);
+      setBkResult({ id, ...result });
       await refresh();
     } catch (err) {
-      show(err instanceof Error ? err.message : "Backup failed");
+      show(err instanceof Error ? err.message : "The backup stopped part way");
+    } finally {
+      setBkRunning(null);
     }
   }
 
-  async function onPlace() {
+  async function onSorted() {
     if (!selected) return;
     await client.placeFile(selected);
-    show("Placed");
+    show("Marked as sorted");
     await refresh();
   }
 
-  if (!onboarded) {
-    const current = TOUR[step]!;
-    const last = step === TOUR.length - 1;
-    return (
-      <div className={`app onboarding${windowChrome ? ` chrome-${windowChrome}` : ""}`}>
-        <div className="tour" role="dialog" aria-modal="true" aria-labelledby="tour-title">
-          <div className="tour-stage">
-            <TourScene key={step} step={step} />
-          </div>
-          <div className="tour-panel">
-            <p className="tour-brand">Memories</p>
-            <h1 id="tour-title">{current.title}</h1>
-            <p>{current.body}</p>
-            <div className="tour-actions">
-              {step > 0 ? (
-                <button className="btn btn-ghost" onClick={() => setStep((s) => s - 1)}>
-                  Back
-                </button>
-              ) : null}
-              <button className="btn btn-primary" onClick={() => (last ? finishTour() : setStep((s) => s + 1))}>
-                {last ? "Open Images" : "Continue"}
-              </button>
-            </div>
-            <button className="tour-skip" onClick={finishTour}>
-              Skip welcome
-            </button>
-            <div className="tour-bar" aria-hidden="true">
-              <i style={{ width: `${((step + 1) / TOUR.length) * 100}%` }} />
-            </div>
-          </div>
-        </div>
-        <WindowControls />
+  async function onCopy(drive: Drive) {
+    if (!selected) return;
+    try {
+      show(`Copying to ${drive.name}…`);
+      await client.copyFile(selected, { destDriveId: drive.id });
+      show(`Copied to ${drive.name}`);
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : `Couldn’t copy to ${drive.name}`);
+    }
+  }
+
+  const browsing = screen === "places" && (!!browseDrive || !!pickerVolume);
+  const browseTitle = pickerVolume?.label ?? browseDrive?.name ?? "";
+  const libFile = screen === "library" && detail && detail.file.id === selected ? detail : null;
+  const inspectorOpen = !!libFile || (browsing && !!browseFile && !!browseDrive);
+
+  const scopeParts: { key: keyof Scope; label: string }[] = [];
+  if (scope.inbox) scopeParts.push({ key: "inbox", label: "New" });
+  if (scope.shelf) scopeParts.push({ key: "shelf", label: SHELF[scope.shelf].label });
+  if (scope.family && SHELF[FAMILY[scope.family].shelf].families.length > 1) scopeParts.push({ key: "family", label: FAMILY[scope.family].label });
+  if (scope.month) scopeParts.push({ key: "month", label: monthLabel(scope.month) });
+  if (scope.day) scopeParts.push({ key: "day", label: dayLabel(scope.day) });
+
+  function dropScope(key: keyof Scope) {
+    const next = { ...scope };
+    delete next[key];
+    if (key === "shelf") delete next.family;
+    if (key === "month") delete next.day;
+    setScope(next);
+    setSelected(null);
+  }
+
+  const libraryEmpty = !places.length ? (
+    <div className="empty hero">
+      <div className="hero-prints" aria-hidden="true">
+        <span className="obj print">
+          <span className="print-img" />
+        </span>
+        <span className="obj sheet" style={{ ["--tint" as string]: "#C8433A" }}>
+          <span className="sheet-tab">PDF</span>
+          <span className="lines" />
+        </span>
+        <span className="obj parcel" style={{ ["--tint" as string]: "#A87A4C" }}>
+          <span className="parcel-lid" />
+          <span className="parcel-tape" />
+          <span className="parcel-label">DMG</span>
+        </span>
       </div>
+      <h2>Let’s fill your cabinet</h2>
+      <p>Add a place, like the Pictures folder on this computer or the Camera on your phone. Everything inside shows up here, sorted for you.</p>
+      <button type="button" className="btn btn-primary big" onClick={() => setAdding(true)}>
+        <Icon name="plus" size={18} /> Add a place
+      </button>
+    </div>
+  ) : (
+    <div className="empty">
+      <div className="empty-art big">
+        <Icon name="sparkle" size={30} />
+      </div>
+      <h2>Nothing found yet</h2>
+      <p>Your places don’t have any files Memories can show yet. Try adding another folder.</p>
+      <button type="button" className="btn btn-soft" onClick={() => setAdding(true)}>
+        <Icon name="plus" size={16} /> Add a place
+      </button>
+    </div>
+  );
+
+  const sidebar = (
+    <LayoutGroup id="nav">
+      <div className="brand" style={windowChrome === "darwin" ? { paddingLeft: 74 } : undefined}>
+        <span className="brand-mark" aria-hidden="true">
+          <i />
+          <i />
+        </span>
+        Memories
+      </div>
+      <nav className="nav" aria-label="Main">
+        <div className="nav-group">
+          <NavItem
+            active={screen === "library" && !scope.shelf && lens !== "moments"}
+            icon="all"
+            label="Everything"
+            onClick={() => openLibrary({})}
+          />
+          {PRIMARY_SHELVES.map((shelf) => {
+            if (shelf === "documents") {
+              const docsActive = screen === "library" && scope.shelf === "documents";
+              const allDocsActive = docsActive && !scope.family;
+              const formats = DOC_NAV.filter((item) => familyCounts[item.family]);
+              return (
+                <div key={shelf} className="nav-accordion">
+                  <div className={`nav-accordion-head${docsActive ? " current" : ""}`}>
+                    <button
+                      type="button"
+                      className={`nav-item${allDocsActive ? " active" : ""}`}
+                      aria-current={allDocsActive ? "page" : undefined}
+                      onClick={() => {
+                        setDocsOpen(true);
+                        openLibrary({ shelf: "documents" });
+                      }}
+                    >
+                      {allDocsActive ? <motion.i layoutId="nav-pill" className="nav-pill" transition={spring} /> : null}
+                      <Icon name="doc" size={18} />
+                      <span className="nav-text">Documents</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`nav-disclose${docsOpen ? " open" : ""}`}
+                      aria-label={docsOpen ? "Hide document formats" : "Show document formats"}
+                      aria-expanded={docsOpen}
+                      onClick={() => setDocsOpen((open) => !open)}
+                    >
+                      <Icon name="chevron" size={14} />
+                    </button>
+                  </div>
+                  <AnimatePresence initial={false}>
+                    {docsOpen ? (
+                      <motion.div
+                        className="nav-sub"
+                        role="group"
+                        aria-label="Document formats"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+                      >
+                        {formats.map((item) => {
+                          const active = docsActive && scope.family === item.family;
+                          return (
+                            <button
+                              key={item.family}
+                              type="button"
+                              className={`nav-item sub${active ? " active" : ""}`}
+                              aria-label={item.label}
+                              aria-current={active ? "page" : undefined}
+                              onClick={() => openLibrary({ shelf: "documents", family: item.family })}
+                            >
+                              {active ? <motion.i layoutId="nav-pill" className="nav-pill" transition={spring} /> : null}
+                              <span className="nav-text">{item.label}</span>
+                              <span className="nav-count" aria-hidden="true">
+                                {(familyCounts[item.family] ?? 0).toLocaleString("en-GB")}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {!formats.length ? <p className="nav-sub-empty">No documents yet</p> : null}
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                </div>
+              );
+            }
+            return (
+              <NavItem
+                key={shelf}
+                active={screen === "library" && scope.shelf === shelf}
+                icon={shelf === "photos" ? "photo" : shelf === "videos" ? "video" : shelf === "music" ? "music" : "doc"}
+                label={SHELF[shelf].label}
+                onClick={() => openLibrary({ shelf })}
+              />
+            );
+          })}
+          {EXTRA_SHELVES.filter((shelf) => shelfCounts[shelf]).map((shelf) => (
+            <NavItem
+              key={shelf}
+              active={screen === "library" && scope.shelf === shelf}
+              icon={shelf === "apps" ? "download" : "doc"}
+              label={SHELF[shelf].label}
+              onClick={() => openLibrary({ shelf })}
+            />
+          ))}
+          <NavItem
+            active={screen === "library" && lens === "moments" && !scope.shelf}
+            icon="moments"
+            label="Moments"
+            onClick={() => openLibrary({}, "moments")}
+          />
+          <NavItem active={showWelcome} icon="sparkle" label="Welcome tour" onClick={openWelcomeTour} />
+        </div>
+
+        <div className="nav-group">
+          <NavItem active={screen === "places" && !browsing} icon="place" label="Places" onClick={() => go("places")} />
+          {places.map((drive) => (
+            <NavItem
+              key={drive.id}
+              active={browsing && browseDrive?.id === drive.id}
+              label={drive.name}
+              onClick={() => void openPlace(drive)}
+            >
+              <span className={`nav-dot${drive.online ? " on" : ""}`} title={placeStatus(drive)} />
+            </NavItem>
+          ))}
+          <button type="button" className="nav-item quiet" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={16} />
+            <span className="nav-text">Add a place</span>
+          </button>
+        </div>
+
+        <div className="nav-group">
+          <NavItem active={screen === "backup"} icon="backup" label="Backup" onClick={() => go("backup")} />
+          <NavItem active={screen === "settings"} icon="settings" label="Settings" onClick={() => go("settings")} />
+        </div>
+      </nav>
+      <div className="sidebar-foot">
+        <span>
+          {plural(files.length, "file")}
+          <br />
+          {places.length ? `${places.filter((d) => d.online).length} of ${plural(places.length, "place")} ready` : "No places yet"}
+        </span>
+        <button
+          type="button"
+          className="icon-btn theme-btn"
+          aria-label={resolvedTheme(themePref) === "dark" ? "Switch to light" : "Switch to dark"}
+          onClick={(event) => {
+            const next = resolvedTheme(themePref) === "dark" ? "light" : "dark";
+            setThemePref(next);
+            saveThemePref(next, { x: event.clientX, y: event.clientY });
+          }}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={resolvedTheme(themePref)}
+              initial={{ opacity: 0, rotate: -90, scale: 0.6 }}
+              animate={{ opacity: 1, rotate: 0, scale: 1 }}
+              exit={{ opacity: 0, rotate: 90, scale: 0.6 }}
+              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+            >
+              <Icon name={resolvedTheme(themePref) === "dark" ? "moon" : "sun"} size={17} />
+            </motion.span>
+          </AnimatePresence>
+        </button>
+      </div>
+    </LayoutGroup>
+  );
+
+  let main: ReactNode;
+  if (error && !files.length && !drives.length) {
+    main = (
+      <div className="empty">
+        <div className="empty-art big spin">
+          <Icon name="sparkle" size={30} />
+        </div>
+        <h2>Memories is getting ready</h2>
+        <p>This usually takes a second. If it keeps showing, quit Memories and open it again.</p>
+        <p className="hint">{error}</p>
+      </div>
+    );
+  } else if (screen === "library") {
+    main = loaded ? (
+      <Library
+        key={JSON.stringify(scope)}
+        files={files}
+        events={events}
+        lens={lens}
+        scope={scope}
+        search={search}
+        view={view}
+        selected={selected}
+        mediaUrl={(id) => client.mediaUrl(id)}
+        onDrill={(next) => {
+          setScope(next);
+          setSelected(null);
+        }}
+        onSelect={setSelected}
+        onOpen={(id) => {
+          setSelected(id);
+          setViewer(id);
+        }}
+        empty={libraryEmpty}
+      />
+    ) : null;
+  } else if (screen === "places") {
+    main = browsing ? (
+      <PlaceBrowser
+        title={browseTitle}
+        path={browsePath}
+        entries={browseEntries}
+        busy={browseBusy}
+        adding={browseAdding}
+        error={browseError}
+        lens={browseLens}
+        selected={browseFile?.relativePath ?? null}
+        picking={!!pickerVolume}
+        thumbUrl={browseDrive && browseDrive.kind !== "phone" ? (entry) => client.driveMediaUrl(browseDrive.id, entry.relativePath) : null}
+        onEnter={(entry) => (pickerVolume ? void loadPicker(pickerVolume, entry.relativePath) : browseDrive && void loadBrowse(browseDrive, entry.relativePath))}
+        onSelect={(entry) => {
+          if (!browseDrive) return;
+          setBrowseFile(entry);
+          setBrowseViewer(false);
+          setBrowseLoad(!needsPhoneConfirm(browseDrive, entry));
+        }}
+        onOpen={(entry) => {
+          if (!browseDrive) return;
+          setBrowseFile(entry);
+          setBrowseLoad(true);
+          setBrowseViewer(true);
+        }}
+        onUse={() => void onUsePhoneFolder()}
+      />
+    ) : (
+      <PlacesHome
+        drives={places}
+        phones={phones}
+        onOpen={(drive) => void openPlace(drive)}
+        onAdd={() => setAdding(true)}
+        onPhone={(volume) => void openPicker(volume)}
+        onBackup={(drive) => startBackup(drive)}
+      />
+    );
+  } else if (screen === "backup") {
+    main = bkSetup ? (
+      <BackupWizard
+        step={bkStep}
+        drives={places}
+        sourceId={bkSource}
+        destId={bkDest}
+        folders={bkFolders}
+        path={bkPath}
+        entries={bkEntries}
+        busy={bkBusy}
+        error={bkError}
+        onPickSource={(drive) => void pickBkSource(drive)}
+        onOpenFolder={(path) => void loadBkFolders(bkSource, path)}
+        onToggle={(path) => setBkFolders((current) => toggleFolder(current, path))}
+        onPickDest={setBkDest}
+        onStep={setBkStep}
+        onCancel={() => setBkSetup(false)}
+        onSave={() => void onSaveBackup()}
+      />
+    ) : (
+      <BackupHome jobs={jobs} drives={drives} running={bkRunning} result={bkResult} onNew={() => startBackup()} onRun={(id) => void onRunBackup(id)} />
+    );
+  } else {
+    main = (
+      <Settings
+        theme={themePref}
+        onTheme={(next, origin) => {
+          setThemePref(next);
+          saveThemePref(next, origin);
+        }}
+      />
     );
   }
 
-  const showInspector = screen === "browse" || screen === "events" || screen === "inbox" || (screen === "drives" && !!browseDrive);
-
-  const go = (fn: () => void) => {
-    fn();
-    setDrawer(false);
-  };
-
-  const renderSidebar = () => (
-    <>
-      <div className="brand" style={windowChrome === "darwin" ? { paddingLeft: 74 } : undefined}>
-        Memories
-      </div>
-      <div className="nav-label">Library</div>
-      {(["photo", "video", "document"] as FileKind[]).map((kind) => (
-        <button
-          key={kind}
-          className={`nav-item${screen === "browse" && typeFilter === kind ? " active" : ""}`}
-          onClick={() =>
-            go(() => {
-              setScreen("browse");
-              setTypeFilter(kind);
-            })
-          }
-        >
-          {icon(kind === "document" ? "doc" : kind)} {KIND_LABEL[kind]}
-        </button>
-      ))}
-      <button className={`nav-item${screen === "events" ? " active" : ""}`} onClick={() => go(() => setScreen("events"))}>
-        {icon("events")} Events
-      </button>
-      <button className={`nav-item${screen === "inbox" ? " active" : ""}`} onClick={() => go(() => setScreen("inbox"))}>
-        {icon("inbox")} Inbox
-        {inboxCount ? <span className="badge">{inboxCount}</span> : null}
-      </button>
-      <div className="nav-label">Your folders</div>
-      {folders.length ? (
-        folders.map((folder) => (
-          <button key={folder.id} className="nav-item">
-            {icon("doc")} {folder.name}
-          </button>
-        ))
-      ) : (
-        <p className="nav-empty">Optional. Create one, then Move to… Bytes stay put.</p>
-      )}
-      <div className="nav-label">Locations</div>
-      {uniqueDrives.map((drive) => (
-        <button key={drive.id} className="nav-item" onClick={() => go(() => setScreen("drives"))}>
-          <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
-          {drive.name}
-        </button>
-      ))}
-      <button className={`nav-item${screen === "drives" ? " active" : ""}`} onClick={() => go(() => setScreen("drives"))}>
-        {icon("drive")} Manage drives
-      </button>
-      <button className={`nav-item${screen === "backup" ? " active" : ""}`} onClick={() => go(() => setScreen("backup"))}>
-        {icon("drive")} Backup
-      </button>
-      <button
-        className={`nav-item${screen === "settings" ? " active" : ""}`}
-        onClick={() => go(() => setScreen("settings"))}
-      >
-        {icon("user")} Settings
-      </button>
-    </>
-  );
+  const crumbs = browsePath.split("/").filter(Boolean);
 
   return (
-    <div className={`app${showInspector ? "" : " no-inspector"}${windowChrome ? ` chrome-${windowChrome}` : ""}`}>
-      <aside className="sidebar">{renderSidebar()}</aside>
+    <MotionConfig reducedMotion="user">
+      <div className={`app${windowChrome ? ` chrome-${windowChrome}` : ""}`}>
+        <aside className="sidebar">{sidebar}</aside>
 
-      <header className="topbar">
-        <button
-          className="menu-btn"
-          aria-label="Browse menu"
-          aria-expanded={drawer}
-          title="Browse"
-          onClick={() => setDrawer((open) => !open)}
-        >
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <path d="M3 5h12M3 9h12M3 13h12" />
-          </svg>
-        </button>
-        <div className="path">
-          {screen === "drives" && (browseDrive || pickerVolume) ? (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setBrowseDrive(null);
-                  setPickerVolume(null);
-                }}
-              >
-                Drives
-              </button>
-              <span className="sep">/</span>
-              <button
-                type="button"
-                className={!browsePath ? "cur" : ""}
-                onClick={() =>
-                  pickerVolume ? void loadPicker(pickerVolume, "") : browseDrive && void loadBrowse(browseDrive.id, "")
-                }
-              >
-                {pickerVolume ? pickerVolume.label : browseDrive?.name}
-              </button>
-              {browsePath
-                .split("/")
-                .filter(Boolean)
-                .map((part, index, parts) => {
-                  const relativePath = parts.slice(0, index + 1).join("/");
-                  return (
-                    <span key={relativePath} style={{ display: "contents" }}>
-                      <span className="sep">/</span>
-                      <button
-                        type="button"
-                        className={index === parts.length - 1 ? "cur" : ""}
-                        onClick={() =>
-                          pickerVolume
-                            ? void loadPicker(pickerVolume, relativePath)
-                            : browseDrive && void loadBrowse(browseDrive.id, relativePath)
-                        }
-                      >
-                        {part}
-                      </button>
-                    </span>
-                  );
-                })}
-            </>
-          ) : (
-            <button className="cur">
-              {screen === "browse"
-                ? KIND_LABEL[typeFilter]
-                : screen === "backup" && bkSetup
-                  ? "New backup"
-                  : screen[0]!.toUpperCase() + screen.slice(1)}
+        <div className="workspace">
+          <header className="topbar">
+            <button type="button" className="icon-btn menu-btn" aria-label="Menu" aria-expanded={drawer} onClick={() => setDrawer((open) => !open)}>
+              <Icon name="menu" size={18} />
             </button>
-          )}
-        </div>
-      </header>
 
-      <main className="main">
-        {error ? (
-          <div className="empty">
-            <h2>Waiting for the local app</h2>
-            <p>{error}</p>
-          </div>
-        ) : screen === "browse" || screen === "inbox" ? (
-          files.length ? (
-            <div className="fm">
-              <div className="colhead">
-                <span />
-                <button>Name</button>
-                <span className="hide-sm">Date</span>
-                <span className="hide-sm">Kind</span>
-                <span className="hide-sm">Size</span>
-                <span className="hide-sm">Where</span>
-              </div>
-              {grouped.map(([month, rows]) => (
-                <section key={month}>
-                  <div className="group-head">
-                    <span>{month}</span>
-                    <span>{rows.length}</span>
-                  </div>
-                  {rows.map((file) => (
-                    <button
-                      key={file.id}
-                      className={`fm-row${selected === file.id ? " selected" : ""}`}
-                      onClick={() => setSelected(file.id)}
-                      onDoubleClick={() => setViewer(file.id)}
-                    >
-                      <span />
-                      <div className="name">
-                        {file.kind === "photo" ? (
-                          <img className="fm-ico" src={client.mediaUrl(file.id)} alt="" />
-                        ) : (
-                          <div className={`fm-ico ${file.kind === "video" ? "vid" : "doc"}`}>
-                            {file.kind === "video" ? "VID" : "DOC"}
-                          </div>
-                        )}
-                        <span>{file.name}</span>
-                      </div>
-                      <span className="dt hide-sm">{file.takenAt ? file.takenAt.slice(0, 10) : "—"}</span>
-                      <span className="kind hide-sm">{file.kind}</span>
-                      <span className="sz hide-sm">—</span>
-                      <span className="where hide-sm">{file.inbox ? "Inbox" : "Placed"}</span>
-                    </button>
-                  ))}
-                </section>
-              ))}
-            </div>
-          ) : (
-            <div className="empty">
-              <h2>{screen === "inbox" ? "Inbox is empty" : `No ${KIND_LABEL[typeFilter].toLowerCase()} yet`}</h2>
-              <p>Register a folder as a drive. Those files will show up here.</p>
-            </div>
-          )
-        ) : screen === "events" ? (
-          events.length ? (
-            <div className="events">
-              {events.map((cluster) => (
-                <article className="event" key={`${cluster.day}-${cluster.place}`}>
-                  <div className="event-head">
-                    <h2>
-                      {dayLabel(cluster.day)}
-                      {cluster.place ? ` · ${cluster.place}` : ""}
-                    </h2>
-                    <span>{cluster.fileIds.length}</span>
-                  </div>
-                  <div className="event-grid">
-                    {cluster.fileIds.map((id) => (
-                      <button
-                        key={id}
-                        className={`event-tile${selected === id ? " selected" : ""}`}
-                        onClick={() => setSelected(id)}
-                        onDoubleClick={() => setViewer(id)}
+            <nav className="crumbs" aria-label="You are here">
+              {screen === "library" ? (
+                <>
+                  <button type="button" className={scopeParts.length ? "" : "cur"} onClick={() => openLibrary({}, lens)}>
+                    {lens === "moments" && !scopeParts.length ? "Moments" : "Everything"}
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {scopeParts.map((part) => (
+                      <motion.span
+                        key={part.key}
+                        className="scope-chip"
+                        layout
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={spring}
                       >
-                        <img className="event-img" src={client.mediaUrl(id)} alt="" />
-                      </button>
+                        {part.label}
+                        <button type="button" aria-label={`Remove ${part.label}`} onClick={() => dropScope(part.key)}>
+                          <Icon name="close" size={12} />
+                        </button>
+                      </motion.span>
                     ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty">
-              <h2>No events yet</h2>
-              <p>Events appear when photos or videos have a date.</p>
-            </div>
-          )
-        ) : screen === "drives" ? (
-          <div className="pad">
-            {browseDrive || pickerVolume ? (
-              <>
-                <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
-                  <h1 style={{ flex: 1, margin: 0 }}>{pickerVolume ? pickerVolume.label : browseDrive?.name}</h1>
+                  </AnimatePresence>
+                </>
+              ) : browsing ? (
+                <>
+                  <button type="button" onClick={() => go("places")}>
+                    Places
+                  </button>
+                  <Icon name="chevron" size={12} />
                   <button
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      setBrowseDrive(null);
-                      setPickerVolume(null);
-                      setBrowseFile(null);
-                      setBrowseViewer(false);
-                    }}
+                    type="button"
+                    className={!browsePath ? "cur" : ""}
+                    onClick={() => (pickerVolume ? void loadPicker(pickerVolume, "") : browseDrive && void loadBrowse(browseDrive, ""))}
                   >
-                    Drives
+                    {browseTitle}
                   </button>
-                  {pickerVolume ? (
-                    <button className="btn btn-primary" disabled={browseBusy} onClick={() => void onUseFolder()}>
-                      Use this folder
-                    </button>
-                  ) : null}
-                </div>
-                {pickerVolume && !browseBusy ? (
-                  <p className="muted">
-                    This folder becomes a Memories drive. Files stay on the phone. Backup is a separate step.
-                  </p>
-                ) : null}
-                <div className="browse-body">
-                  {browseBusy && browseWait === "read" ? (
-                    <FolderWait
-                      name={
-                        pickerVolume
-                          ? browsePath
-                            ? pathLeaf(browsePath)
-                            : pickerVolume.label
-                          : folderLabel(browseDrive!, browsePath)
-                      }
-                      mode="read"
-                    />
-                  ) : (
-                    <>
-                      {browseEntries.map((entry) => (
+                  {crumbs.map((part, index) => {
+                    const rel = crumbs.slice(0, index + 1).join("/");
+                    return (
+                      <span key={rel} className="crumb">
+                        <Icon name="chevron" size={12} />
                         <button
-                          key={entry.relativePath}
-                          className={`drive-row${browseFile?.relativePath === entry.relativePath ? " selected" : ""}`}
                           type="button"
-                          disabled={browseBusy}
-                          onClick={() => {
-                            if (entry.directory) {
-                              if (pickerVolume) {
-                                void loadPicker(pickerVolume, entry.relativePath);
-                                return;
-                              }
-                              if (browseDrive) void loadBrowse(browseDrive.id, entry.relativePath);
-                              return;
-                            }
-                            pickBrowseFile(entry);
-                          }}
-                          onDoubleClick={() => {
-                            if (!entry.directory) openBrowseFile(entry);
-                          }}
+                          className={index === crumbs.length - 1 ? "cur" : ""}
+                          onClick={() => (pickerVolume ? void loadPicker(pickerVolume, rel) : browseDrive && void loadBrowse(browseDrive, rel))}
                         >
-                          {icon(entry.directory ? "folder" : entry.kind === "photo" ? "photo" : entry.kind === "video" ? "video" : "doc")}
-                          <div style={{ flex: 1, textAlign: "left" }}>
-                            <strong>{entry.name}</strong>
-                            <div className="muted">
-                              {entry.directory ? "Folder" : `${entry.kind ?? "File"} · ${formatSize(entry.size)}`}
-                            </div>
-                          </div>
+                          {part}
                         </button>
-                      ))}
-                      {browseError ? (
-                        <div className="empty">
-                          <h2>Could not read this folder</h2>
-                          <p>{browseError}</p>
-                        </div>
-                      ) : !browseBusy && !browseEntries.length ? (
-                        <div className="empty">
-                          <h2>Empty folder</h2>
-                          <p>Nothing to show here.</p>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                  {browseBusy && browseWait === "index" ? (
-                    <FolderWait
-                      name={browsePath ? pathLeaf(browsePath) : pickerVolume?.label ?? folderLabel(browseDrive!, browsePath)}
-                      mode="index"
-                    />
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
-                  <h1 style={{ flex: 1, margin: 0 }}>Drives</h1>
-                  <button className="btn btn-primary" onClick={() => setModal("register")}>
-                    Register a drive
-                  </button>
-                </div>
-                {phones.length ? (
-                  <div className="phone-banner">
-                    <p>
-                      {phones.length === 1
-                        ? `${phones[0]!.label} is plugged in.`
-                        : `${phones.length} Android phones are plugged in.`}{" "}
-                      Choose a folder to use as a drive. Backup is a separate step.
-                    </p>
-                    {phones.map((volume) => (
-                      <button
-                        key={volume.volumeId}
-                        className="btn btn-primary"
-                        onClick={() => void openPicker(volume)}
-                      >
-                        Choose a folder on {volume.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {uniqueDrives.map((drive) => (
-                  <button key={drive.id} className="drive-row" onClick={() => void openBrowse(drive)}>
-                    <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
-                    <div style={{ flex: 1, textAlign: "left" }}>
-                      <strong>{drive.name}</strong>
-                      <div className="muted">
-                        {drive.online ? "Connected" : "Not connected"}
-                        {drive.kind === "phone" ? ` · ${phoneFolderLabel(drive.rootPath)}` : ` · ${drive.rootPath}`}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-                {!drives.length && !phones.length ? (
-                  <div className="empty">
-                    <h2>No drives yet</h2>
-                    <p>A drive is a folder you choose. Pick one on this computer, or a folder on a plugged-in phone.</p>
-                  </div>
-                ) : null}
-              </>
-            )}
-          </div>
-        ) : screen === "backup" ? (
-          <div className="pad">
-            {bkSetup ? (
-              <>
-                <div className="actionbar" style={{ border: 0, padding: "0 0 8px" }}>
-                  <h1 style={{ flex: 1, margin: 0 }}>New backup</h1>
-                </div>
-                {(() => {
-                  const source = uniqueDrives.find((drive) => drive.id === bkSource);
-                  const canNext = bkStep === 0 ? !!bkSource : bkStep === 1 ? bkFolders.length > 0 : !!bkDest;
-                  return (
-                    <>
-                      <div className="bk-steps">
-                        {["Source", "Folders", "Drive"].map((label, index) => (
-                          <span className={index === bkStep ? "on" : ""} key={label}>
-                            {index + 1}. {label}
-                          </span>
-                        ))}
-                      </div>
-                      {bkStep === 0 ? (
-                        <>
-                          <p className="hello" style={{ marginBottom: 14 }}>
-                            Pick the drive that has the folders you want to copy. You will choose folders next.
-                          </p>
-                          {uniqueDrives.map((drive) => (
-                            <button
-                              key={drive.id}
-                              className={`pick${bkSource === drive.id ? " on" : ""}`}
-                              type="button"
-                              onClick={() => void pickBkSource(drive)}
-                            >
-                              <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
-                              <div>
-                                <strong>{drive.name}</strong>
-                                <div className="muted">
-                                  {drive.online ? "Connected — tap to use" : "Not connected — plug in to list folders"}
-                                </div>
-                              </div>
-                            </button>
-                          ))}
-                          {!uniqueDrives.length ? (
-                            <div className="empty" style={{ padding: "24px 8px" }}>
-                              <h2>No drives yet</h2>
-                              <p>Register a folder as a drive first. Backup copies from that folder onto another drive.</p>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : bkStep === 1 && source ? (
-                        <>
-                          <p className="hello" style={{ marginBottom: 10 }}>
-                            Folders on {source.name}. Open a folder to look inside. Check the ones to copy. Only these
-                            copy when you start backup.
-                          </p>
-                          <nav className="path" style={{ flex: "none", height: "auto", marginBottom: 10 }}>
-                            <button
-                              type="button"
-                              className={!bkPath ? "cur" : ""}
-                              onClick={() => void loadBkFolders(source.id, "")}
-                            >
-                              {source.name}
-                            </button>
-                            {bkPath
-                              .split("/")
-                              .filter(Boolean)
-                              .map((part, index, parts) => {
-                                const relativePath = parts.slice(0, index + 1).join("/");
-                                return (
-                                  <span key={relativePath} style={{ display: "contents" }}>
-                                    <span className="sep">/</span>
-                                    <button
-                                      type="button"
-                                      className={index === parts.length - 1 ? "cur" : ""}
-                                      onClick={() => void loadBkFolders(source.id, relativePath)}
-                                    >
-                                      {part}
-                                    </button>
-                                  </span>
-                                );
-                              })}
-                          </nav>
-                          {bkBusy ? (
-                            <FolderWait name={bkPath ? pathLeaf(bkPath) : source.name} mode="read" />
-                          ) : (
-                            <>
-                              <div className={`check-row${backupFolderCovered(bkFolders, bkPath) ? " on" : ""}`}>
-                                <button
-                                  type="button"
-                                  className="box"
-                                  aria-pressed={backupFolderCovered(bkFolders, bkPath)}
-                                  aria-label={`Select ${bkPath ? pathLeaf(bkPath) : source.name}`}
-                                  onClick={() => setBkFolders((current) => toggleBackupFolder(current, bkPath))}
-                                >
-                                  {backupFolderCovered(bkFolders, bkPath) ? "✓" : ""}
-                                </button>
-                                <div>
-                                  <strong>This folder</strong>
-                                  <div className="muted">
-                                    {backupPathLabel(bkPath, source.name)} — everything in it
-                                  </div>
-                                </div>
-                              </div>
-                              {bkEntries.map((entry) => {
-                                const on = backupFolderCovered(bkFolders, entry.relativePath);
-                                return (
-                                  <div className={`check-row${on ? " on" : ""}`} key={entry.relativePath}>
-                                    <button
-                                      type="button"
-                                      className="box"
-                                      aria-pressed={on}
-                                      aria-label={`Select ${entry.name}`}
-                                      onClick={() =>
-                                        setBkFolders((current) => toggleBackupFolder(current, entry.relativePath))
-                                      }
-                                    >
-                                      {on ? "✓" : ""}
-                                    </button>
-                                    <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                                      <strong>{entry.name}</strong>
-                                      <div className="muted">
-                                        {on && !bkFolders.includes(entry.relativePath)
-                                          ? "Included with a folder above"
-                                          : "Folder"}
-                                      </div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="open"
-                                      aria-label={`Open ${entry.name}`}
-                                      onClick={() => void loadBkFolders(source.id, entry.relativePath)}
-                                    >
-                                      Open
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                              {bkError ? (
-                                <div className="empty">
-                                  <h2>Could not read this folder</h2>
-                                  <p>{bkError}</p>
-                                </div>
-                              ) : !bkEntries.length ? (
-                                <p className="muted">No folders inside. Select this folder to copy it.</p>
-                              ) : null}
-                            </>
-                          )}
-                          {bkFolders.length ? (
-                            <div className="bk-picks">
-                              {bkFolders.map((path) => (
-                                <span key={path || source.name}>{backupPathLabel(path, source.name)}</span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </>
-                      ) : (
-                        <>
-                          <p className="hello" style={{ marginBottom: 14 }}>
-                            Where should copies land? Originals stay on {source?.name || "the source"}.
-                          </p>
-                          {uniqueDrives
-                            .filter((drive) => drive.id !== bkSource)
-                            .map((drive) => (
-                              <button
-                                key={drive.id}
-                                className={`pick${bkDest === drive.id ? " on" : ""}`}
-                                type="button"
-                                onClick={() => setBkDest(drive.id)}
-                              >
-                                <span className={`dot${drive.online ? "" : " off"}`} style={{ background: "#0071E3" }} />
-                                <div>
-                                  <strong>{drive.name}</strong>
-                                  <div className="muted">
-                                    {drive.online ? "Connected" : "Offline — we’ll wait until you plug it in"}
-                                  </div>
-                                </div>
-                              </button>
-                            ))}
-                        </>
-                      )}
-                      <div className="bk-wizard-nav">
-                        <button className="btn btn-secondary" type="button" onClick={() => setBkSetup(false)}>
-                          Cancel
-                        </button>
-                        {bkStep > 0 ? (
-                          <button
-                            className="btn btn-secondary"
-                            type="button"
-                            onClick={() => setBkStep((step) => (step > 0 ? step - 1 : 0))}
-                          >
-                            Back
-                          </button>
-                        ) : null}
-                        {bkStep < 2 ? (
-                          <button
-                            className="btn btn-primary"
-                            type="button"
-                            disabled={!canNext}
-                            onClick={() => setBkStep((step) => (step < 2 ? step + 1 : step))}
-                          >
-                            Continue
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-primary"
-                            type="button"
-                            disabled={!canNext}
-                            onClick={() => void onSaveBackup()}
-                          >
-                            Save backup
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-              </>
-            ) : (
-              <>
-                <div className="actionbar" style={{ border: 0, padding: "0 0 12px" }}>
-                  <h1 style={{ flex: 1, margin: 0 }}>Backup</h1>
-                  <button className="btn btn-primary" onClick={() => startBackup()}>
-                    New backup
-                  </button>
-                </div>
-                <p className="hello" style={{ marginBottom: 14 }}>
-                  Backup copies selected folders onto another drive. Plug both in, then Start. It is not how you add a
-                  drive.
-                </p>
-                {jobs.map((job) => {
-                  const source = drives.find((d) => d.id === job.sourceDriveId);
-                  const dest = drives.find((d) => d.id === job.destDriveId);
-                  const ready = source?.online && dest?.online;
-                  const folders =
-                    !job.sourceRelativePaths.length || job.sourceRelativePaths.every((path) => !path)
-                      ? "This drive folder"
-                      : job.sourceRelativePaths.map((path) => backupPathLabel(path, source?.name ?? "Drive")).join(", ");
-                  return (
-                    <div className="bk-card" key={job.id}>
-                      <h3>
-                        {source?.name ?? "Source"} → {dest?.name ?? "Destination"}
-                      </h3>
-                      <div className="bk-meta">
-                        {folders}
-                        {job.lastRunAt ? ` · Last run ${job.lastRunAt.slice(0, 16).replace("T", " ")}` : ""}
-                      </div>
-                      <div className="bk-actions">
-                        <button className="btn btn-primary" disabled={!ready} onClick={() => void onRunBackup(job.id)}>
-                          Start backup
-                        </button>
-                      </div>
-                      {!ready ? <div className="bk-wait">Connect both drives to start.</div> : null}
-                    </div>
-                  );
-                })}
-                {!jobs.length ? (
-                  <div className="empty">
-                    <h2>No saved backup yet</h2>
-                    <p>Pick folders on a drive, then a drive to copy onto. We keep that selection.</p>
-                  </div>
-                ) : null}
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="pad">
-            <h1>Settings</h1>
-            <h2>Appearance</h2>
-            <div className="settings-row">
-              <span>Theme</span>
-              <select
-                aria-label="Appearance"
-                value={themePref}
-                onChange={(event) => {
-                  const next = event.target.value as ThemePref;
-                  setThemePref(next);
-                  saveThemePref(next);
-                }}
-              >
-                <option value="system">Match system</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select>
-            </div>
-            <h2>Demo</h2>
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                localStorage.removeItem("memories-tour");
-                setOnboarded(false);
-                setStep(0);
-              }}
-            >
-              Replay welcome
-            </button>
-          </div>
-        )}
-      </main>
+                      </span>
+                    );
+                  })}
+                </>
+              ) : (
+                <span className="cur">{screen === "places" ? "Places" : screen === "backup" ? (bkSetup ? "New backup" : "Backup") : "Settings"}</span>
+              )}
+            </nav>
 
-      {showInspector ? (
-        <aside className="inspector">
-          {screen === "drives" && browseDrive && browseFile ? (
-            <>
-              <div className="insp-preview">
-                {browseLoad ? (
-                  <FilePreview
-                    name={browseFile.name}
-                    kind={browseFile.kind}
-                    src={client.driveMediaUrl(browseDrive.id, browseFile.relativePath)}
-                    fit="inspector"
+            {screen === "library" && files.length ? (
+              <div className="tools">
+                <label className={`search${search ? " filled" : ""}`}>
+                  <Icon name="search" size={15} />
+                  <input
+                    ref={searchRef}
+                    type="search"
+                    placeholder="Find by name"
+                    aria-label="Find by name"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    onKeyDown={(event) => event.key === "Escape" && setSearch("")}
                   />
-                ) : (
-                  <div className="doc-preview">
-                    <button className="btn btn-primary" type="button" onClick={() => setBrowseLoad(true)}>
-                      Preview
-                    </button>
-                  </div>
-                )}
-              </div>
-              <h3>{browseFile.name}</h3>
-              <p className="muted">
-                {browseFile.kind ?? "file"} · {formatSize(browseFile.size)}
-              </p>
-              <p className="muted">{browseFile.relativePath}</p>
-              {!browseLoad ? (
-                <p className="muted">Large phone files load over USB when you preview them.</p>
-              ) : null}
-              <button className="btn btn-primary" style={{ marginTop: 12 }} type="button" onClick={() => openBrowseFile(browseFile)}>
-                Open
-              </button>
-            </>
-          ) : detail ? (
-            <>
-              <div className="insp-preview">
-                <FilePreview
-                  name={detail.file.name}
-                  kind={detail.file.kind}
-                  src={client.mediaUrl(detail.file.id)}
-                  fit="inspector"
+                </label>
+                <Segmented
+                  id="lens"
+                  label="View by"
+                  value={lens}
+                  onChange={(next) => {
+                    changeLens(next);
+                    setSelected(null);
+                  }}
+                  options={[
+                    { value: "type", label: "Type" },
+                    { value: "date", label: "Date" },
+                    { value: "moments", label: "Moments" },
+                  ]}
+                />
+                <Segmented
+                  id="view"
+                  label="Layout"
+                  value={view}
+                  onChange={changeView}
+                  options={[
+                    { value: "tiles", label: "Tiles", icon: "grid" },
+                    { value: "list", label: "List", icon: "list" },
+                  ]}
                 />
               </div>
-              <h3>{detail.file.name}</h3>
-              <p className="muted">
-                {detail.file.kind} · {formatSize(detail.object?.size ?? undefined)}
-              </p>
-              <h2>Where</h2>
-              {detail.replicas.map(({ replica, drive }) => (
-                <div className="settings-row" key={`${drive.id}-${replica.relativePath}`}>
-                  <span>
-                    {drive.name}
-                    {drive.online ? "" : " · offline"}
-                  </span>
-                  <span className={`chip ${replica.status === "copying" ? "go" : "ok"}`}>
-                    {replica.status === "copying" ? `${replica.progress}%` : "Ready"}
-                  </span>
-                </div>
-              ))}
-              {detail.file.inbox ? (
-                <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => void onPlace()}>
-                  Place
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <p className="muted">Select a file</p>
-          )}
-        </aside>
-      ) : null}
+            ) : browsing && !pickerVolume && browseEntries.length ? (
+              <div className="tools">
+                <Segmented
+                  id="browse"
+                  label="View by"
+                  value={browseLens}
+                  onChange={setBrowseLens}
+                  options={[
+                    { value: "folders", label: "Folders" },
+                    { value: "type", label: "Type" },
+                  ]}
+                />
+              </div>
+            ) : null}
+          </header>
 
-      <footer className="dock">
-        <span>
-          {files.length} items · {drives.filter((d) => d.online).length} drives connected
-        </span>
-      </footer>
+          <main className={`main${inspectorOpen ? " with-inspector" : ""}`}>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={`${screen}-${browsing ? "b" : ""}-${bkSetup ? "w" : ""}`}
+                className="screen"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, transition: { duration: 0.1 } }}
+                transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+              >
+                {main}
+              </motion.div>
+            </AnimatePresence>
+          </main>
 
-      {windowChrome ? null : (
-        <nav className="tabs">
-          <button className={screen === "events" ? "active" : ""} onClick={() => setScreen("events")}>
-            Events
-          </button>
-          <button
-            className={screen === "browse" && typeFilter === "photo" ? "active" : ""}
-            onClick={() => {
-              setScreen("browse");
-              setTypeFilter("photo");
+          <Inspector
+            open={inspectorOpen}
+            title={libFile?.file.name ?? browseFile?.name ?? ""}
+            onClose={() => {
+              setSelected(null);
+              setBrowseFile(null);
             }}
           >
-            Images
-          </button>
-          <button aria-label="Copy to…" title="Copy to…">
-            <span className="fab">+</span>
-          </button>
-          <button className={screen === "inbox" ? "active" : ""} onClick={() => setScreen("inbox")}>
-            Inbox
-          </button>
-          <button className={screen === "settings" ? "active" : ""} onClick={() => setScreen("settings")}>
-            You
-          </button>
-        </nav>
-      )}
-
-      {drawer ? (
-        <div className="drawer-bg" onClick={() => setDrawer(false)}>
-          <aside className="sidebar drawer-panel" onClick={(e) => e.stopPropagation()}>
-            {renderSidebar()}
-          </aside>
-        </div>
-      ) : null}
-
-      {browseViewer && browseDrive && browseFile ? (
-        <div className="viewer">
-          <div className="vbar top">
-            <button type="button" onClick={() => setBrowseViewer(false)}>
-              Back
-            </button>
-            <strong style={{ flex: 1 }}>{browseFile.name}</strong>
-          </div>
-          <FilePreview
-            name={browseFile.name}
-            kind={browseFile.kind}
-            src={client.driveMediaUrl(browseDrive.id, browseFile.relativePath)}
-            fit="viewer"
-          />
-          <div className="vbar bot" />
-        </div>
-      ) : viewer && detail?.file.id === viewer ? (
-        <div className="viewer">
-          <div className="vbar top">
-            <button type="button" onClick={() => setViewer(null)}>
-              Back
-            </button>
-            <strong style={{ flex: 1 }}>{detail.file.name}</strong>
-          </div>
-          <FilePreview name={detail.file.name} kind={detail.file.kind} src={client.mediaUrl(detail.file.id)} fit="viewer" />
-          <div className="vbar bot" />
-        </div>
-      ) : null}
-
-      {modal === "register" ? (
-        <div className="modal-bg" onClick={() => setModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Register a drive</h2>
-            <p>A folder you choose — on this computer, a disk, or a phone. We’ll remember the files in it. Backup is a separate step.</p>
-            {phones.length ? (
-              <div className="drive-pick">
-                {phones.map((volume) => (
-                  <button key={volume.volumeId} type="button" onClick={() => void openPicker(volume)}>
-                    <span className="dot" style={{ background: "#0071E3" }} />
-                    <span>
-                      <strong>{volume.label}</strong>
-                      <div className="muted">Choose a folder on this phone</div>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p>No Android phone yet. Plug it in, unlock the screen, and set USB to File transfer. You do not need Developer options. Quit Android File Transfer if macOS opens it.</p>
-            )}
-            <label className="settings-row">
-              <span>Name</span>
-              <input className="search-mini" value={regName} onChange={(e) => setRegName(e.target.value)} />
-            </label>
-            <label className="settings-row">
-              <span>Kind</span>
-              <select value={regKind} onChange={(e) => setRegKind(e.target.value as DriveKind)}>
-                <option value="computer">This computer</option>
-                <option value="disk">External disk</option>
-                <option value="usb">USB</option>
-                <option value="phone">Android phone</option>
-              </select>
-            </label>
-            {regKind !== "phone" ? (
+            {libFile ? (
               <>
-                <label className="settings-row">
-                  <span>Folder</span>
-                  <input className="search-mini" value={regPath} onChange={(e) => setRegPath(e.target.value)} />
-                </label>
-                <div className="bk-wizard-nav">
-                  <button className="btn btn-secondary" onClick={() => void onPickFolder()}>
-                    Choose folder
+                <button type="button" className="insp-preview" aria-label={`Open ${libFile.file.name}`} onClick={() => setViewer(libFile.file.id)}>
+                  <FilePreview name={libFile.file.name} kind={libFile.file.kind} src={client.mediaUrl(libFile.file.id)} fit="inspector" />
+                </button>
+                <h3>{libFile.file.name}</h3>
+                <Facts
+                  rows={[
+                    ["Kind", kindLine(libFile.file.name, libFile.file.kind)],
+                    ["Date", shortDate(libFile.file.takenAt)],
+                    ["Where", libFile.file.place ?? ""],
+                    ["Size", formatSize(libFile.object?.size)],
+                  ]}
+                />
+                <h4>Kept on</h4>
+                <ul className="kept">
+                  {libFile.replicas.map(({ replica, drive }) => (
+                    <li key={`${drive.id}-${replica.relativePath}`}>
+                      <Icon name={drive.kind} size={16} />
+                      <span>{drive.name}</span>
+                      <span className={`chip ${replica.status === "copying" ? "go" : drive.online ? "ok" : "off"}`}>
+                        {replica.status === "copying" ? `Copying ${replica.progress ?? 0}%` : drive.online ? "Ready" : "Unplugged"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="insp-actions">
+                  <button type="button" className="btn btn-primary" onClick={() => setViewer(libFile.file.id)}>
+                    <Icon name="open" size={16} /> Open
                   </button>
-                  <button className="btn btn-primary" disabled={!regPath} onClick={() => void onRegister()}>
-                    Use this folder
+                  <CopyToMenu
+                    places={places.filter((drive) => !libFile.replicas.some((row) => row.drive.id === drive.id))}
+                    onPick={(drive) => void onCopy(drive)}
+                  />
+                  {libFile.file.inbox ? (
+                    <button type="button" className="btn btn-soft" onClick={() => void onSorted()}>
+                      <Icon name="check" size={16} /> Mark as sorted
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            ) : browseDrive && browseFile ? (
+              <>
+                <div className="insp-preview">
+                  {browseLoad ? (
+                    <FilePreview
+                      name={browseFile.name}
+                      kind={browseFile.kind}
+                      src={client.driveMediaUrl(browseDrive.id, browseFile.relativePath)}
+                      fit="inspector"
+                    />
+                  ) : (
+                    <div className="still">
+                      <button type="button" className="btn btn-primary" onClick={() => setBrowseLoad(true)}>
+                        Preview
+                      </button>
+                      <span>Big files take a moment to come over the cable.</span>
+                    </div>
+                  )}
+                </div>
+                <h3>{browseFile.name}</h3>
+                <Facts
+                  rows={[
+                    ["Kind", kindLine(browseFile.name, browseFile.kind)],
+                    ["Size", formatSize(browseFile.size)],
+                    ["Folder", browseFile.relativePath.split("/").slice(0, -1).join(" › ") || browseDrive.name],
+                  ]}
+                />
+                <div className="insp-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setBrowseLoad(true);
+                      setBrowseViewer(true);
+                    }}
+                  >
+                    <Icon name="open" size={16} /> Open
                   </button>
                 </div>
               </>
-            ) : (
-              <p className="muted">Choose a folder on a connected phone above. Unlock it and set USB to File transfer.</p>
-            )}
-          </div>
+            ) : null}
+          </Inspector>
+        </div>
+
+        <AnimatePresence>
+          {drawer ? (
+            <motion.div className="drawer-bg" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDrawer(false)}>
+              <motion.aside
+                className="sidebar drawer-panel"
+                initial={{ transform: "translateX(-100%)" }}
+                animate={{ transform: "translateX(0%)" }}
+                exit={{ transform: "translateX(-100%)" }}
+                transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {sidebar}
+              </motion.aside>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {browseViewer && browseDrive && browseFile ? (
+            <Viewer name={browseFile.name} onClose={() => setBrowseViewer(false)}>
+              <FilePreview name={browseFile.name} kind={browseFile.kind} src={client.driveMediaUrl(browseDrive.id, browseFile.relativePath)} fit="viewer" />
+            </Viewer>
+          ) : viewer && detail?.file.id === viewer ? (
+            <Viewer name={detail.file.name} onClose={() => setViewer(null)}>
+              <FilePreview name={detail.file.name} kind={detail.file.kind} src={client.mediaUrl(detail.file.id)} fit="viewer" />
+            </Viewer>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {adding ? (
+            <AddPlaceDialog
+              phones={phones}
+              onClose={() => setAdding(false)}
+              onPhone={(volume) => void openPicker(volume)}
+              onPickFolder={pickFolder}
+              onAdd={(input) => void onAddPlace(input)}
+            />
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showWelcome ? <Welcome key={welcomeKey} onDone={finishWelcome} /> : null}
+        </AnimatePresence>
+
+        <div className="toast-zone" aria-live="polite">
+          <AnimatePresence>
+            {toast ? (
+              <motion.div
+                key={toast.id}
+                className="toast"
+                initial={{ opacity: 0, transform: "translateY(16px) scale(0.96)" }}
+                animate={{ opacity: 1, transform: "translateY(0px) scale(1)" }}
+                exit={{ opacity: 0, transform: "translateY(8px) scale(0.98)", transition: { duration: 0.15 } }}
+                transition={{ type: "spring", duration: 0.4, bounce: 0.2 }}
+              >
+                <Icon name="check" size={15} />
+                {toast.text}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+
+      <WindowControls />
+      {import.meta.env.DEV && import.meta.env.VITE_MEMORIES_DEMO === "true" && !new URLSearchParams(window.location.search).has("live") ? (
+        <div className="demo-flag" aria-hidden="true">
+          Sample data
         </div>
       ) : null}
-
-      {toast ? <div className="toast">{toast}</div> : null}
-      <WindowControls />
     </div>
+    </MotionConfig>
   );
 }
