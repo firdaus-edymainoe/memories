@@ -3,29 +3,41 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Memories is a file manager for the disks you already own. Organize locally, for free. Cloud is optional." />
-  <title>Memories — a file manager for the disks you already own</title>
+  <meta name="description" content="Memories keeps your family’s photos, videos and papers in one calm place — without asking you to sort folders. Try the private preview." />
+  <title>Memories — your family’s files, already sorted</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Literata:opsz,wght@7..72,500;7..72,650&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --paper: #E7EDE8;
-      --ink: #1C2A24;
-      --mute: #4E5F56;
-      --line: #C5D0C8;
-      --print: #F6F1E8;
+      --canvas: #F7F9F5;
+      --paper: #E9EEE8;
+      --surface: #FFFFFF;
+      --ink: #1B2922;
+      --ink-2: #34453C;
+      --mute: #56675D;
+      --line: #D5DDD6;
       --leaf: #2A6A4A;
-      --leaf-2: #245C41;
-      --shadow: 0 18px 40px rgba(28, 42, 36, 0.14);
+      --leaf-hover: #225A3E;
+      --leaf-ink: #FFFFFF;
+      --leaf-soft: #DCEBE1;
+      --leaf-text: #215A3D;
+      --print: #FFFEFA;
+      --stage: linear-gradient(160deg, #DDE9DF 0%, #EEF3EC 55%, #F4EFE3 100%);
+      --shadow-sm: 0 1px 2px rgba(27, 41, 34, 0.06), 0 1px 5px rgba(27, 41, 34, 0.05);
+      --shadow-md: 0 2px 4px rgba(27, 41, 34, 0.06), 0 8px 20px rgba(27, 41, 34, 0.1);
+      --shadow-lg: 0 10px 24px rgba(27, 41, 34, 0.1), 0 30px 70px rgba(27, 41, 34, 0.2);
       --nav: 64px;
+      --serif: Literata, Georgia, serif;
+      --sans: "Atkinson Hyperlegible", system-ui, sans-serif;
+      --ease: cubic-bezier(0.23, 1, 0.32, 1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
-    html, body { background: var(--paper); color: var(--ink); }
+    html, body { background: var(--canvas); color: var(--ink); }
     body {
-      font-family: "Atkinson Hyperlegible", system-ui, sans-serif;
+      font-family: var(--sans);
       font-size: 18px;
       line-height: 1.55;
       -webkit-tap-highlight-color: rgba(42, 106, 74, 0.18);
@@ -33,210 +45,305 @@
     }
     img { display: block; max-width: 100%; }
     a { color: inherit; }
+    ::selection { background: var(--leaf-soft); }
 
     .skip {
-      position: absolute; left: 12px; top: -40px;
-      background: var(--ink); color: var(--paper);
-      padding: 8px 12px; border-radius: 6px; z-index: 20;
+      position: absolute; left: 12px; top: -48px;
+      background: var(--ink); color: var(--canvas);
+      padding: 8px 12px; border-radius: 8px; z-index: 40;
     }
     .skip:focus { top: 12px; }
 
-    .wrap { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
+    .wrap { width: min(1080px, calc(100% - 40px)); margin: 0 auto; }
 
     header {
-      position: sticky; top: 0; z-index: 10;
-      background: color-mix(in srgb, var(--paper) 92%, transparent);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--line);
+      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
+      height: var(--nav);
     }
     nav {
-      display: flex; align-items: center; justify-content: space-between;
-      height: var(--nav); gap: 16px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
     }
     .logo {
-      font-family: Literata, Georgia, serif;
-      font-weight: 650; font-size: 22px;
-      text-decoration: none; letter-spacing: -0.02em;
+      font-family: var(--serif);
+      font-weight: 650;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+      color: var(--print);
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
     }
-    .nav-links { display: flex; gap: 22px; color: var(--mute); font-size: 16px; }
-    .nav-links a { text-decoration: none; }
-    .nav-links a:hover { color: var(--ink); }
-    .nav-links a[aria-current="page"] { color: var(--ink); font-weight: 700; }
+    .nav-cta {
+      height: 40px;
+      padding: 0 16px;
+      border-radius: 11px;
+      background: var(--surface);
+      color: var(--leaf-text);
+      font-weight: 700;
+      font-size: 15px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      box-shadow: var(--shadow-sm);
+      transition: transform 160ms var(--ease), background 150ms ease;
+    }
+    .nav-cta:hover { background: var(--leaf-soft); }
+    .nav-cta:active { transform: scale(0.97); }
 
     .btn {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 44px; padding: 0 18px;
-      border-radius: 8px; text-decoration: none; font-weight: 700;
-      font-size: 16px; border: 0; cursor: pointer;
-      transition: background 200ms ease, transform 160ms ease, color 200ms ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 48px;
+      padding: 0 22px;
+      border-radius: 13px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 16px;
+      border: 0;
+      cursor: pointer;
+      transition: background 150ms ease, color 150ms ease, transform 160ms var(--ease), box-shadow 150ms ease;
     }
-    .btn:active { transform: scale(0.98); }
-    .btn-primary { background: var(--leaf); color: #F4FBF6; }
-    .btn-primary:hover { background: var(--leaf-2); }
-    .btn-ghost { color: var(--ink); }
-    .btn-ghost:hover { color: var(--leaf); }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary {
+      background: var(--leaf);
+      color: var(--leaf-ink);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 1px 2px rgba(20, 50, 34, 0.25);
+    }
+    .btn-primary:hover { background: var(--leaf-hover); }
+    .btn-ghost {
+      color: var(--print);
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(8px);
+    }
+    .btn-ghost:hover { background: rgba(255, 255, 255, 0.2); }
+    .btn-soft {
+      background: var(--leaf-soft);
+      color: var(--leaf-text);
+    }
+    .btn-soft:hover { background: color-mix(in srgb, var(--leaf-soft) 70%, var(--leaf) 12%); }
 
     :focus-visible {
       outline: 2px solid var(--leaf);
       outline-offset: 3px;
+      border-radius: 8px;
     }
 
+    /* Hero: one composition — brand, headline, line, CTA, full-bleed photo */
     .hero {
+      position: relative;
+      min-height: 100dvh;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr);
-      gap: 48px;
-      align-items: center;
-      min-height: calc(100dvh - var(--nav));
-      padding: 32px 0 72px;
+      align-items: end;
+      color: var(--print);
+      overflow: hidden;
+      background: #1B2922;
     }
-    .hero h1 {
-      font-family: Literata, Georgia, serif;
-      font-size: clamp(40px, 6vw, 68px);
+    .hero-photo {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center 30%;
+    }
+    .hero-veil {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(15, 24, 19, 0.35) 0%, rgba(15, 24, 19, 0.15) 28%, rgba(15, 24, 19, 0.55) 62%, rgba(15, 24, 19, 0.88) 100%);
+    }
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: calc(var(--nav) + 48px) 0 56px;
+    }
+    .hero-brand {
+      font-family: var(--serif);
+      font-size: clamp(42px, 8vw, 72px);
       font-weight: 650;
       letter-spacing: -0.03em;
-      line-height: 1.05;
-      text-wrap: balance;
-      max-width: 11em;
+      line-height: 1;
+      margin-bottom: 18px;
     }
-    .lede {
-      margin-top: 20px;
-      max-width: 36em;
-      color: var(--mute);
-      font-size: 19px;
+    .hero h1 {
+      font-family: var(--serif);
+      font-size: clamp(28px, 4.2vw, 40px);
+      font-weight: 550;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+      text-wrap: balance;
+      max-width: 16em;
+      margin-bottom: 14px;
+    }
+    .hero .lede {
+      max-width: 34em;
+      font-size: 18px;
+      line-height: 1.5;
+      color: color-mix(in srgb, var(--print) 88%, transparent);
       text-wrap: pretty;
     }
-    .hero-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 28px; align-items: center; }
-
-    .table {
-      position: relative;
-      min-height: 480px;
-      padding: 8px 4px 20px;
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+      align-items: center;
     }
-    .print {
-      position: absolute;
-      background: var(--print);
-      padding: 10px 10px 36px;
-      box-shadow: var(--shadow);
-      width: min(54%, 280px);
-    }
-    .print img {
-      width: 100%;
-      height: 210px;
-      object-fit: cover;
-      background: #D5D0C6;
-    }
-    .print span {
-      display: block;
-      margin-top: 8px;
-      font-size: 13px;
-      font-style: italic;
-      color: var(--mute);
-    }
-    .p1 { top: 8px; left: 8%; transform: rotate(-6deg); z-index: 3; }
-    .p2 { top: 72px; right: 4%; transform: rotate(5deg); width: min(48%, 250px); z-index: 2; }
-    .p2 img { height: 168px; }
-    .p3 { bottom: 12px; left: 22%; transform: rotate(2deg); width: min(50%, 260px); z-index: 4; }
-    .p3 img { height: 150px; }
 
     section {
-      padding: 88px 0 96px;
-      scroll-margin-top: calc(var(--nav) + 12px);
+      padding: 88px 0;
+      scroll-margin-top: 24px;
     }
-    section + section { border-top: 1px solid var(--line); }
+    .band { background: var(--paper); }
+    .stage-band { background: var(--stage); }
+
     h2 {
-      font-family: Literata, Georgia, serif;
-      font-size: clamp(28px, 4vw, 42px);
+      font-family: var(--serif);
+      font-size: clamp(28px, 4vw, 40px);
       font-weight: 650;
       letter-spacing: -0.03em;
       line-height: 1.15;
       text-wrap: balance;
-      max-width: 16em;
-      scroll-margin-top: calc(var(--nav) + 16px);
+      max-width: 14em;
     }
-    .intro {
+    .section-lead {
       margin-top: 12px;
-      max-width: 34em;
+      max-width: 36em;
       color: var(--mute);
+      font-size: 18px;
+      text-wrap: pretty;
     }
 
-    .steps {
+    .reasons {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px 32px;
+      margin-top: 48px;
+    }
+    .reason h3 {
+      font-family: var(--serif);
+      font-size: 24px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .reason p {
+      color: var(--mute);
+      font-size: 17px;
+      max-width: 28em;
+    }
+    .reason .ask {
+      display: block;
+      font-style: italic;
+      color: var(--leaf-text);
+      font-family: var(--serif);
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .lens-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .lens-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--line);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ink-2);
+    }
+    .lens-chip strong { color: var(--leaf-text); font-weight: 700; }
+
+    .how {
       display: grid;
       gap: 0;
       margin-top: 40px;
-      max-width: 40em;
+      max-width: 42em;
     }
-    .step {
+    .how-step {
       display: grid;
-      grid-template-columns: 2.2em 1fr;
-      gap: 14px;
-      padding: 22px 0;
+      grid-template-columns: auto 1fr;
+      gap: 16px;
+      padding: 24px 0;
       border-top: 1px solid var(--line);
     }
-    .step b {
-      font-family: Literata, Georgia, serif;
+    .how-step:last-child { border-bottom: 1px solid var(--line); }
+    .how-n {
+      font-family: var(--serif);
       font-size: 22px;
       font-weight: 650;
       color: var(--leaf);
+      width: 1.4em;
     }
-    .step h3 {
-      font-size: 20px;
+    .how-step h3 {
+      font-size: 19px;
       font-weight: 700;
       margin-bottom: 4px;
     }
-    .step p { color: var(--mute); font-size: 17px; }
+    .how-step p { color: var(--mute); font-size: 17px; }
 
-    .split {
+    .story {
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
       gap: 48px;
-      margin-top: 36px;
-      align-items: start;
-    }
-    .split h3 {
-      font-size: 22px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-    .split p { color: var(--mute); max-width: 32em; }
-    .price {
-      font-family: Literata, Georgia, serif;
-      font-size: 15px;
-      font-style: italic;
-      color: var(--leaf);
-      margin-bottom: 10px;
-    }
-    .drives {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 20px;
-    }
-    .drives span {
-      background: var(--print);
-      padding: 8px 12px;
-      font-size: 15px;
-      color: var(--ink);
-    }
-
-    .moment {
-      display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-      gap: 40px;
       align-items: center;
     }
-    .moment img {
-      width: 100%;
-      height: 360px;
-      object-fit: cover;
-      box-shadow: var(--shadow);
+    .story-frame {
+      background: var(--print);
+      padding: 14px 14px 40px;
+      box-shadow: var(--shadow-lg);
+      transform: rotate(-1.2deg);
     }
-    .moment p { margin-top: 14px; max-width: 34em; color: var(--mute); }
+    .story-frame img {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      background: #C5D0C8;
+    }
+    .story-frame figcaption {
+      margin-top: 12px;
+      font-size: 14px;
+      font-style: italic;
+      color: var(--mute);
+    }
+    .story h2 { max-width: 12em; }
+    .story p {
+      margin-top: 14px;
+      color: var(--mute);
+      max-width: 32em;
+    }
 
     .close {
-      text-align: left;
-      padding-bottom: 120px;
+      text-align: center;
+      padding: 96px 0 112px;
     }
-    .close .wrap { max-width: 720px; margin-left: max(20px, calc((100% - 1120px) / 2)); }
+    .close h2 {
+      margin-left: auto;
+      margin-right: auto;
+      max-width: 14em;
+    }
+    .close .section-lead {
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .close .hero-actions {
+      justify-content: center;
+      margin-top: 28px;
+    }
 
     footer {
       border-top: 1px solid var(--line);
@@ -248,147 +355,156 @@
       gap: 16px;
       flex-wrap: wrap;
     }
-    footer a { color: var(--leaf); text-decoration: none; }
+    footer a {
+      color: var(--leaf-text);
+      font-weight: 700;
+      text-decoration: none;
+    }
     footer a:hover { text-decoration: underline; }
 
-    @media (max-width: 980px) {
-      .nav-links { display: none; }
-    }
     @media (max-width: 860px) {
-      .hero, .split, .moment { grid-template-columns: 1fr; }
-      .hero { min-height: 0; padding-top: 24px; }
-      .table { min-height: 380px; margin-top: 8px; }
-      .print { width: 58%; }
-      .p2 { width: 50%; }
-      .moment img { height: 240px; }
-      .close .wrap { margin-left: auto; }
+      .reasons, .story { grid-template-columns: 1fr; }
+      .story-frame { transform: none; max-width: 420px; }
+      .hero-copy { padding-bottom: 40px; }
+      section { padding: 64px 0; }
     }
 
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      .btn { transition: none; }
-      .print { transform: none; }
+      .btn, .nav-cta { transition: none; }
+      .story-frame { transform: none; }
     }
   </style>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
+
   <header>
     <nav class="wrap">
       <a class="logo" href="#" translate="no">Memories</a>
-      <div class="nav-links">
-        <a href="#how">How it works</a>
-        <a href="#free">Free &amp; paid</a>
-        <a href="#story">A wedding</a>
-      </div>
-      <a class="btn btn-primary" href="./app/">Open the mock</a>
+      <a class="nav-cta" href="./app/">Try the preview</a>
     </nav>
   </header>
 
   <main id="main">
-    <section class="hero wrap">
-      <div>
-        <h1>Your files already live on a disk.</h1>
+    <section class="hero" aria-label="Introduction">
+      <img
+        class="hero-photo"
+        width="1600"
+        height="1067"
+        fetchpriority="high"
+        alt=""
+        src="https://images.unsplash.com/photo-1511895426328-dc8714191300?w=1600&q=80"
+      />
+      <div class="hero-veil" aria-hidden="true"></div>
+      <div class="hero-copy">
+        <p class="hero-brand" translate="no">Memories</p>
+        <h1>Your family’s files, already sorted for you.</h1>
         <p class="lede">
-          Memories is a file manager for this computer, the phone, the SSD, and the USB in the drawer.
-          A drive is a folder you choose. Backup copies onto a disk you trust. Cloud is a spare you can add later.
+          Photos, videos, school letters and receipts — from this computer, your phone and the drives in the drawer — in one calm place. No folders to keep tidy.
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="./app/">Open the mock</a>
-          <a class="btn btn-ghost" href="#how">See how it works</a>
+          <a class="btn btn-primary" href="./app/">Try the preview</a>
+          <a class="btn btn-ghost" href="#why">Why it helps</a>
         </div>
-      </div>
-      <div class="table" aria-hidden="true">
-        <figure class="print p1">
-          <img width="280" height="210" fetchpriority="high" alt="" src="https://images.unsplash.com/photo-1519741497674-611481863552?w=800&q=80" />
-        </figure>
-        <figure class="print p2">
-          <img width="250" height="168" alt="" src="https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=700&q=80" />
-        </figure>
-        <figure class="print p3">
-          <img width="260" height="150" alt="" src="https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=700&q=80" />
-          <span>This Mac · 18 Mar 2026</span>
-        </figure>
       </div>
     </section>
 
-    <section id="how">
+    <section id="why" class="band">
       <div class="wrap">
-        <h2>It runs on this computer. Not in a browser tab.</h2>
-        <p class="intro">
-          A website cannot see a USB stick plug in, or an iPhone Camera Roll.
-          Memories lives next to Finder, so your disks are first-class.
+        <h2>Looking for something shouldn’t mean digging through folders.</h2>
+        <p class="section-lead">
+          Most of us start with neat folders, then life gets busy. Memories sorts for you instead — so finding a file feels like asking a simple question.
         </p>
-        <div class="steps">
-          <article class="step">
-            <b>1</b>
-            <div>
-              <h3>Choose a folder as a drive</h3>
-              <p>This Mac’s Photos folder. Camera on the phone. A folder on an SSD. Memories remembers what’s in it. The files stay put.</p>
-            </div>
+        <div class="reasons">
+          <article class="reason">
+            <span class="ask">“I’m looking for a photo…”</span>
+            <h3>See by type</h3>
+            <p>Photos together. Videos together. Documents by kind — PDF, Word, spreadsheets. Open the format you need.</p>
           </article>
-          <article class="step">
-            <b>2</b>
-            <div>
-              <h3>See them clearly</h3>
-              <p>Images, videos, documents — by date. Photos and videos also as events, grouped by day and place.</p>
-            </div>
+          <article class="reason">
+            <span class="ask">“I’m looking for that weekend…”</span>
+            <h3>See by date</h3>
+            <p>Flip to Date and jump to the month or day it happened. Same files, another way home.</p>
           </article>
-          <article class="step">
-            <b>3</b>
-            <div>
-              <h3>Backup is a separate step</h3>
-              <p>Open folders on a drive, check the ones to copy, then pick a disk. Plug both in, then Start. Originals stay where they are.</p>
-            </div>
+          <article class="reason">
+            <span class="ask">“Where did we put the spare copy?”</span>
+            <h3>Keep a spare</h3>
+            <p>Backup copies chosen folders onto another drive you trust. Your originals never move.</p>
           </article>
+        </div>
+        <div class="lens-row" aria-hidden="true">
+          <span class="lens-chip"><strong>Type</strong> — find the kind of file</span>
+          <span class="lens-chip"><strong>Date</strong> — find when it happened</span>
+          <span class="lens-chip"><strong>Moments</strong> — days that belong together</span>
         </div>
       </div>
     </section>
 
-    <section id="free">
+    <section id="how" class="stage-band">
       <div class="wrap">
-        <h2>Use it to tidy the disks in the house. Pay only if you want offsite.</h2>
-        <div class="split">
-          <div>
-            <p class="price">Free</p>
-            <h3>On your computer</h3>
-            <p>Choose a folder on This Mac, the phone, the SSD, the travel USB. Browse, back up between those drives, and keep working with the network unplugged. No account required.</p>
-            <div class="drives" aria-label="Local drives">
-              <span>This Mac</span>
-              <span>Phone</span>
-              <span>SSD</span>
-              <span>USB</span>
+        <h2>Three quiet steps. Then you’re home.</h2>
+        <p class="section-lead">
+          Nothing gets uploaded for you. Files stay where they already are — Memories just helps you see them clearly.
+        </p>
+        <div class="how">
+          <article class="how-step">
+            <span class="how-n">1</span>
+            <div>
+              <h3>Add the places you keep things</h3>
+              <p>A Pictures folder. The camera on your phone. A family hard drive. Pick them once — Memories remembers what’s there.</p>
             </div>
-          </div>
-          <div>
-            <p class="price">Paid, later</p>
-            <h3>Memories Cloud</h3>
-            <p>An extra copy offsite when a disk makes you nervous. Originals stay where you put them. You did not migrate your life. You added a spare.</p>
-          </div>
+          </article>
+          <article class="how-step">
+            <span class="how-n">2</span>
+            <div>
+              <h3>Look the way you’re thinking</h3>
+              <p>Switch Type or Date anytime, even after you’ve opened a group. Moments gathers photos and videos from the same day.</p>
+            </div>
+          </article>
+          <article class="how-step">
+            <span class="how-n">3</span>
+            <div>
+              <h3>Copy a spare when you want one</h3>
+              <p>Choose a few folders and a drive to copy them to, then press Back up now. Unplugged drives still show in the list — plug in to open.</p>
+            </div>
+          </article>
         </div>
       </div>
     </section>
 
     <section id="story">
-      <div class="wrap moment">
-        <img width="720" height="360" loading="lazy" alt="Wedding guests in a garden" src="https://images.unsplash.com/photo-1519741497674-611481863552?w=1200&q=80" />
+      <div class="wrap story">
+        <figure class="story-frame">
+          <img
+            width="720"
+            height="540"
+            loading="lazy"
+            alt="Family and friends gathered outdoors"
+            src="https://images.unsplash.com/photo-1519741497674-611481863552?w=1200&q=80"
+          />
+          <figcaption>One day. Several places. Still one story.</figcaption>
+        </figure>
         <div>
-          <h2>The wedding is on five disks. Open it as one event.</h2>
+          <h2>The wedding lives on five places. Open it as one day.</h2>
           <p>
-            Aisha is not hunting folders named FINAL_final_2. She opens Memories.
-            One day in Kuala Lumpur. Under each photo: phone, USB, Summer SSD (offline).
-            Plug the SSD in, and those files open.
+            Aisha isn’t hunting folders named Final_final_2. She opens Memories, finds that Saturday in Kuala Lumpur, and sees every photo — phone, travel stick, Summer drive. If a drive is in the drawer, it’s still listed. Plug it in, and those files open.
           </p>
+          <div class="hero-actions">
+            <a class="btn btn-soft" href="./app/">Try the preview</a>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="close">
+    <section class="close band">
       <div class="wrap">
-        <h2>Organize how you want. Store where you choose.</h2>
-        <p class="intro">The mock is a prototype of the local app — not a website that only sees our servers.</p>
+        <h2>Keep every memory where you can find it.</h2>
+        <p class="section-lead">
+          This private preview uses sample family files so you can feel the cabinet — no install, no account for the real app later.
+        </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="./app/">Open the mock</a>
+          <a class="btn btn-primary" href="./app/">Try the preview</a>
         </div>
       </div>
     </section>
@@ -396,7 +512,7 @@
 
   <footer class="wrap">
     <span translate="no">Memories</span>
-    <span><a href="./app/">UI mock</a> · local app, cloud optional</span>
+    <span><a href="./app/">Live preview</a> · stays on your computer when you install</span>
   </footer>
 </body>
 </html>
