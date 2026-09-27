@@ -135,6 +135,89 @@ h1 { font-size: 30px; line-height: 1.15; text-wrap: balance; }
 @media (max-width: 860px) {
   .demo-flag { left: 14px; }
 }
+.demo-session .demo-flag { display: none; }
+
+.signin-boot {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: var(--mute);
+  font-weight: 700;
+  background: var(--stage);
+}
+.signin-bg {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--scene-sun) 55%, transparent), transparent 42%),
+    radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--leaf) 18%, transparent), transparent 36%),
+    var(--stage);
+}
+.signin {
+  width: min(420px, 100%);
+  padding: 28px 28px 24px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.signin-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.signin h1 { font-size: 28px; margin: 0 0 6px; }
+.signin > p { color: var(--ink-2); line-height: 1.5; margin: 0 0 8px; }
+.signin .btn-primary { width: 100%; margin-top: 18px; height: 44px; }
+.signin-error {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #C8433A 12%, var(--surface));
+  color: #9B2F28;
+  font-size: 14px;
+  font-weight: 700;
+}
+html[data-theme="dark"] .signin-error {
+  background: rgba(200, 67, 58, 0.16);
+  color: #F0A39D;
+}
+.demo-session { min-height: 100vh; }
+.demo-session-bar {
+  position: fixed;
+  z-index: 45;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+  color: var(--ink-2);
+  font-size: 13px;
+  max-width: calc(100vw - 24px);
+}
+.demo-session-bar strong { color: var(--ink); font-weight: 700; }
+.demo-session-sep { margin: 0 6px; color: var(--mute); }
+.demo-session-bar .btn { height: 32px; padding: 0 12px; gap: 6px; }
+@media (max-width: 560px) {
+  .demo-session-bar { left: 12px; right: 12px; transform: none; justify-content: space-between; }
+}
 
 ::view-transition-old(root),
 ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }

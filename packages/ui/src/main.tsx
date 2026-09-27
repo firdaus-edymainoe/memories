@@ -2,7 +2,7 @@ import "@fontsource/atkinson-hyperlegible/400.css";
 import "@fontsource/atkinson-hyperlegible/700.css";
 import "@fontsource-variable/literata";
 import { MemoriesClient } from "@memories/client";
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoriesApp } from "./App.js";
 import "./app.css";
@@ -17,17 +17,24 @@ function useDemoData() {
   return import.meta.env.VITE_MEMORIES_DEMO === "true";
 }
 
+function useDemoAuth() {
+  return import.meta.env.VITE_DEMO_AUTH === "true";
+}
+
 async function boot() {
   let client = new MemoriesClient(api);
   if (useDemoData()) {
     const { demoClient } = await import("./demo.js");
     client = demoClient();
   }
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <MemoriesApp client={client} />
-    </StrictMode>,
-  );
+
+  let tree: ReactNode = <MemoriesApp client={client} />;
+  if (useDemoAuth()) {
+    const { DemoGate } = await import("./DemoGate.js");
+    tree = <DemoGate>{tree}</DemoGate>;
+  }
+
+  createRoot(document.getElementById("root")!).render(<StrictMode>{tree}</StrictMode>);
 }
 
 void boot();

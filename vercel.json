@@ -6,10 +6,11 @@
   "framework": null,
   "build": {
     "env": {
-      "VITE_MEMORIES_DEMO": "true"
+      "VITE_MEMORIES_DEMO": "true",
+      "VITE_DEMO_AUTH": "true"
     }
   },
   "rewrites": [
-    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ]
 }
