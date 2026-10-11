@@ -190,5 +190,10 @@ export const PLACE_KIND: Record<Drive["kind"], { label: string; hint: string }> 
 
 export function placeStatus(drive: Drive) {
   if (drive.online) return drive.kind === "computer" ? "Ready" : "Plugged in";
-  return drive.kind === "computer" ? "Can’t find this folder" : "Unplugged";
+  return drive.kind === "computer" || drive.missing ? "Can’t find this folder" : "Unplugged";
+}
+
+/** A place whose folder can be pointed somewhere else (it was moved or renamed). */
+export function canLocate(drive: Drive) {
+  return !drive.online && drive.kind !== "phone" && (drive.kind === "computer" || !!drive.missing);
 }

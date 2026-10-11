@@ -1,7 +1,7 @@
 import type { DirEntry, Drive, DriveKind, VolumePresence } from "@memories/core";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { FAMILY, familyOf, formatSize, pathLeaf, PLACE_KIND, placeStatus, placeWhere, plural, SHELF, SHELF_ORDER, shelfOf } from "./files.js";
+import { canLocate, FAMILY, familyOf, formatSize, pathLeaf, PLACE_KIND, placeStatus, placeWhere, plural, SHELF, SHELF_ORDER, shelfOf } from "./files.js";
 import { Icon } from "./icons.js";
 import { FolderWait } from "./Preview.js";
 import { Tile } from "./Tile.js";
@@ -17,6 +17,7 @@ export function PlacesHome({
   onAdd,
   onPhone,
   onBackup,
+  onLocate,
 }: {
   drives: Drive[];
   phones: VolumePresence[];
@@ -24,6 +25,7 @@ export function PlacesHome({
   onAdd: () => void;
   onPhone: (volume: VolumePresence) => void;
   onBackup: (drive: Drive) => void;
+  onLocate: (drive: Drive) => void;
 }) {
   return (
     <div className="pad places">
@@ -89,9 +91,15 @@ export function PlacesHome({
                   <i />
                   {placeStatus(drive)}
                 </span>
-                <button type="button" className="link" onClick={() => onBackup(drive)}>
-                  Back up
-                </button>
+                {canLocate(drive) ? (
+                  <button type="button" className="link" onClick={() => onLocate(drive)} aria-label={`Locate ${drive.name}`}>
+                    Locate…
+                  </button>
+                ) : (
+                  <button type="button" className="link" onClick={() => onBackup(drive)}>
+                    Back up
+                  </button>
+                )}
               </div>
             </motion.div>
           ))}

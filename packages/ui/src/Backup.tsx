@@ -26,7 +26,7 @@ export function folderLabel(path: string, driveName: string) {
   return path ? path.split("/").filter(Boolean).join(" › ") : `All of ${driveName}`;
 }
 
-export type BackupResult = { id: string; copied: number; skipped: number };
+export type BackupResult = { id: string; copied: number; skipped: number; conflicts?: string[] };
 
 export function BackupHome({
   jobs,
@@ -110,6 +110,9 @@ export function BackupHome({
                             <path d="M5 12.5l4.5 4.5L19 7.5" />
                           </svg>
                           {done.copied ? `All done. ${plural(done.copied, "new file")} copied.` : "All done. Everything was already safe."}
+                          {done.conflicts?.length
+                            ? ` Skipped ${plural(done.conflicts.length, "file")}: ${dest?.name ?? "the drive"} already has a different file with the same name.`
+                            : ""}
                         </>
                       ) : ready ? (
                         friendlySince(job.lastRunAt)

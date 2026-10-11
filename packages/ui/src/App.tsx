@@ -43,6 +43,15 @@ function readPref<T extends string>(key: string, allowed: readonly T[], fallback
   }
 }
 
+/** What to tell people when a request fails. Network failures never show as "Failed to fetch". */
+function friendlyError(err: unknown) {
+  if (!(err instanceof Error)) return "Memories isn’t responding";
+  if (err.name === "OfflineError" || err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(err.message)) {
+    return "Memories isn’t responding";
+  }
+  return err.message;
+}
+
 function joinMount(mountPath: string, relativePath: string) {
   if (!relativePath) return mountPath;
   return `${mountPath.replace(/\/$/, "")}/${relativePath}`;
@@ -175,6 +184,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [jobs, setJobs] = useState<BackupJob[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<FileDetail | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
@@ -241,8 +251,10 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
       setEvents(nextEvents);
       setJobs(nextJobs);
       setError(null);
+      setFailures(0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Memories isn’t responding");
+      setError(friendlyError(err));
+      setFailures((n) => n + 1);
     } finally {
       setLoaded(true);
     }
@@ -251,6 +263,13 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // While the local API is unreachable (still starting, or restarting), keep retrying with backoff.
+  useEffect(() => {
+    if (!failures) return;
+    const timer = window.setTimeout(() => void refresh(), Math.min(1000 * 2 ** (failures - 1), 8000));
+    return () => window.clearTimeout(timer);
+  }, [failures, refresh]);
 
   useEffect(() => {
     if ((screen !== "places" && screen !== "backup") || browseDrive || pickerVolume) return;
@@ -337,7 +356,8 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     setScreen(next);
     setDrawer(false);
     setSelected(null);
-    if (next !== "places") resetBrowse();
+    // Places in the sidebar or the breadcrumb always goes back to the list of places.
+    resetBrowse();
     if (next !== "backup") setBkSetup(false);
   }
 
@@ -415,6 +435,18 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     setPickerVolume(null);
     setBrowseDrive(drive);
     await loadBrowse(drive, "");
+  }
+
+  async function onLocate(drive: Drive) {
+    const rootPath = await pickFolder();
+    if (!rootPath) return;
+    try {
+      const next = await client.locateDrive(drive.id, rootPath);
+      show(`Found ${next.name}`);
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : `Couldn’t use that folder for ${drive.name}`);
+    }
   }
 
   async function onUsePhoneFolder() {
@@ -769,15 +801,18 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   );
 
   let main: ReactNode;
-  if (error && !files.length && !drives.length) {
+  if (error && !files.length && !drives.length && screen !== "settings") {
     main = (
       <div className="empty">
         <div className="empty-art big spin">
           <Icon name="sparkle" size={30} />
         </div>
         <h2>Memories is getting ready</h2>
-        <p>This usually takes a second. If it keeps showing, quit Memories and open it again.</p>
+        <p>This usually takes a second. We’ll keep trying. If it keeps showing, quit Memories and open it again.</p>
         <p className="hint">{error}</p>
+        <button type="button" className="btn" onClick={() => void refresh()}>
+          Try again
+        </button>
       </div>
     );
   } else if (screen === "library") {
@@ -840,6 +875,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         onAdd={() => setAdding(true)}
         onPhone={(volume) => void openPicker(volume)}
         onBackup={(drive) => startBackup(drive)}
+        onLocate={(drive) => void onLocate(drive)}
       />
     );
   } else if (screen === "backup") {
