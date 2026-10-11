@@ -101,9 +101,10 @@ function hasMtpConfig(device: UsbDevice) {
 }
 
 function stringDesc(device: UsbDevice, index: number): Promise<string | null> {
-  if (!index || !device.getStringDescriptor) return Promise.resolve(null);
+  const read = device.getStringDescriptor?.bind(device);
+  if (!index || !read) return Promise.resolve(null);
   return new Promise((resolve) => {
-    device.getStringDescriptor(index, (err, value) => resolve(err ? null : value || null));
+    read(index, (err, value) => resolve(err ? null : value || null));
   });
 }
 
@@ -240,14 +241,14 @@ function filterNested(rows: Array<MtpObject & { parent: number }>, parent: numbe
 }
 
 async function readExact(transfer: (size: number) => Promise<Buffer>, packetSize: number): Promise<Buffer> {
-  let first = Buffer.alloc(0);
+  let first: Buffer = Buffer.alloc(0);
   for (let i = 0; i < 3 && first.length === 0; i += 1) {
     first = await transfer(packetSize);
   }
   if (first.length < 12) throw new Error("Short MTP packet");
   const length = first.readUInt32LE(0);
   if (length < 12) throw new Error("Short MTP packet");
-  const chunks = [first];
+  const chunks: Buffer[] = [first];
   let got = first.length;
   while (got < length) {
     const next = await transfer(Math.min(CHUNK, Math.max(packetSize, length - got)));
@@ -318,7 +319,7 @@ async function transact(
 ) {
   await send(command(code, txn, params));
   if (outgoing) await send(dataContainer(code, txn, outgoing));
-  let data = Buffer.alloc(0);
+  let data: Buffer = Buffer.alloc(0);
   for (;;) {
     const packet = await recv();
     if (packet.length < 12) throw new Error("Short MTP packet");
@@ -693,7 +694,7 @@ export class UsbMtpHost implements MtpHost {
           }
         }
       } finally {
-        bulkIn.timeout = prev;
+        if (prev !== undefined) bulkIn.timeout = prev;
       }
     };
     const drop = async () => {

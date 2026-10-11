@@ -15,6 +15,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLocalPorts } from "./host.js";
 
+// Response bodies in these tests are checked by assertions, not by types.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = any;
+
 async function exists(path: string) {
   try {
     await access(path);
@@ -88,14 +92,14 @@ describe("desktop host", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Mac", kind: "computer", rootPath: root }),
     });
-    const { drive } = await created.json();
+    const { drive } = (await created.json()) as Json;
     await app.request("/ingest", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ driveId: drive.id }),
     });
     const listed = await app.request("/files?kind=photo");
-    const { files } = await listed.json();
+    const { files } = (await listed.json()) as Json;
     expect(files).toHaveLength(1);
     const media = await app.request(`/files/${files[0].id}/media`);
     expect(media.status).toBe(200);
@@ -110,21 +114,21 @@ describe("desktop host", () => {
 
     const ports = await createLocalPorts(join(dir, "catalog.sqlite"));
     const app = createApp(ports);
-    const source = await (
+    const source: Json = await (
       await app.request("/drives", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: "Camera", kind: "computer", rootPath: camera }),
       })
     ).json();
-    const dest = await (
+    const dest: Json = await (
       await app.request("/drives", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: "Stick", kind: "usb", rootPath: stick }),
       })
     ).json();
-    const saved = await (
+    const saved: Json = await (
       await app.request("/backups", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -144,7 +148,7 @@ describe("desktop host", () => {
     await app.request("/sync", { method: "POST", headers: { "content-type": "application/json" } });
     const missing = await app.request(`/backups/${saved.job.id}/run`, { method: "POST", headers: { "content-type": "application/json" } });
     expect(missing.status).toBe(400);
-    expect((await missing.json()).error).toMatch(/Can’t find the Camera folder/);
+    expect(((await missing.json()) as Json).error).toMatch(/Can’t find the Camera folder/);
     expect(await exists(join(stick, "Photos", "new-shot.jpg"))).toBe(false);
 
     await rename(parked, camera);

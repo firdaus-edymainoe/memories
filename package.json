@@ -10,6 +10,7 @@
     "test": "npm run test --workspaces --if-present",
     "dev:ui": "npm run dev -w @memories/ui",
     "dev:api": "npm start -w @memories/desktop",
+    "typecheck": "for p in packages/core packages/db-sqlite packages/fs-darwin packages/fs-win32 packages/fs-android packages/server packages/client packages/ui apps/desktop e2e; do echo \"tsc -p $p\"; tsc -p $p || exit 1; done",
     "test:e2e": "playwright test",
     "test:e2e:api": "playwright test --project=api",
     "test:e2e:web": "playwright test --project=web",

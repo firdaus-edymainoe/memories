@@ -81,7 +81,7 @@ export function contentDisposition(name: string) {
 }
 
 function media(bytes: Uint8Array, mime: string, name: string) {
-  return new Response(bytes as BodyInit, {
+  return new Response(bytes as unknown as ConstructorParameters<typeof Response>[0], {
     headers: {
       "content-type": mime,
       "content-disposition": contentDisposition(name),

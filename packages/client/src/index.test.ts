@@ -13,7 +13,7 @@ describe("MemoriesClient", () => {
     const original = globalThis.fetch;
     globalThis.fetch = (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      return hono.request(url.replace("http://local", ""), init);
+      return Promise.resolve(hono.request(url.replace("http://local", ""), init));
     };
     try {
       const client = new MemoriesClient("http://local");
