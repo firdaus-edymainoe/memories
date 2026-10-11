@@ -39,7 +39,9 @@ export class Mem {
   }
 
   async json<T>(method: "GET" | "POST" | "PUT", url: string, data?: unknown): Promise<T> {
-    const res = await this.api.fetch(url, { method, ...(data === undefined ? {} : { data }) });
+    // Changes always go as JSON (the API refuses anything else), even without a body.
+    const payload = method === "GET" ? data : (data ?? {});
+    const res = await this.api.fetch(url, { method, ...(payload === undefined ? {} : { data: payload }) });
     const body = await res.json();
     if (!res.ok()) throw new Error(`${method} ${url} -> ${res.status()}: ${JSON.stringify(body)}`);
     return body as T;
@@ -50,7 +52,16 @@ export class Mem {
   }
 
   async ingest(driveId: string, relativePath?: string) {
-    return this.json<{ files: number; replicas: number }>("POST", "/ingest", { driveId, relativePath });
+    return this.json<{ files: number; replicas: number; removed: number }>("POST", "/ingest", { driveId, relativePath });
+  }
+
+  /** Queue answers for the system folder picker (null = the user cancels). */
+  async queuePicker(...paths: (string | null)[]) {
+    await this.json("PUT", "/__test/picker", { paths });
+  }
+
+  async pickerCalls() {
+    return (await this.json<{ picker: { calls: number } }>("GET", "/__test/state")).picker.calls;
   }
 
   /** Register and index a folder in one go. */
@@ -93,7 +104,7 @@ export class Mem {
   }
 
   async runBackup(id: string) {
-    return this.json<{ copied: number; skipped: number }>("POST", `/backups/${id}/run`);
+    return this.json<{ copied: number; skipped: number; conflicts: string[] }>("POST", `/backups/${id}/run`);
   }
 
   /** Replace the plugged-in volume list. The test disk at "/" stays unless `withRoot` is false. */

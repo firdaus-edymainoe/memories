@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "../../support/fixtures.js";
 import { familyPictures, sha256 } from "../../support/places.js";
@@ -81,6 +81,16 @@ test.describe("file details, copy and mark as sorted (UI)", () => {
     await openFile(app, "notes.txt");
     await details(app).getByRole("button", { name: "Close details for notes.txt" }).click();
     await expect(details(app)).toBeHidden();
+  });
+
+  test("Copy to… skips a different file with the same name and says so", async ({ app }) => {
+    await writeFile(join(usbMount, "notes.txt"), "precious, unrelated");
+    await openFile(app, "notes.txt");
+    await details(app).getByRole("button", { name: "Copy to…" }).click();
+    await app.getByRole("menuitem", { name: /Travel USB/ }).click();
+    await expect(app.getByText("Skipped: Travel USB already has a different file called “notes.txt”. Nothing was overwritten.")).toBeVisible();
+    await expect(details(app).locator(".kept li")).toHaveText([/Pictures\s*Ready/]);
+    expect((await readFile(join(usbMount, "notes.txt"))).toString()).toBe("precious, unrelated");
   });
 
   test("a copy that fails shows the reason", async ({ app, mem }) => {

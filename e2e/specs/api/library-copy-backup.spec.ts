@@ -1,6 +1,6 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, knownBug, test, type Mem } from "../../support/fixtures.js";
+import { expect, test, type Mem } from "../../support/fixtures.js";
 import { familyPictures, jpeg, pdf, sha256, text } from "../../support/places.js";
 
 async function twoPlaces(mem: Mem) {
@@ -34,7 +34,7 @@ test.describe("library (API)", () => {
     expect(placed.file.inbox).toBe(false);
     expect((await mem.files("?inbox=true")).map((f) => f.name)).not.toContain("notes.txt");
     expect((await mem.files("?inbox=false")).map((f) => f.name)).toEqual(["notes.txt"]);
-    expect((await mem.api.post("/files/file_nope/place")).status()).toBe(404);
+    expect((await mem.api.post("/files/file_nope/place", { data: {} })).status()).toBe(404);
   });
 
   test("serves a photo's bytes with its type", async ({ mem }) => {
@@ -48,7 +48,7 @@ test.describe("library (API)", () => {
 
   test("file detail and media for unknown ids", async ({ mem }) => {
     expect((await mem.api.get("/files/file_nope")).status()).toBe(404);
-    expect((await mem.api.get("/files/file_nope/media")).status()).toBe(409);
+    expect((await mem.api.get("/files/file_nope/media")).status()).toBe(404);
   });
 
   test("media says 'no connected copy' when every copy is unplugged", async ({ mem }) => {
@@ -64,7 +64,6 @@ test.describe("library (API)", () => {
   });
 
   test("serves files whose names are not plain ASCII", async ({ mem }) => {
-    knownBug("Content-Disposition carries the raw file name; any non-Latin-1 name (’, emoji, CJK) makes media return 500");
     const root = await mem.place("Pictures", { "Adam’s birthday.jpg": jpeg("adam") });
     const drive = await mem.addAndIngest({ name: "Pics", kind: "computer", rootPath: root });
     const file = await mem.fileByName("Adam’s birthday.jpg");
@@ -73,17 +72,33 @@ test.describe("library (API)", () => {
   });
 
   test("falls back to another copy when the first copy was deleted on disk", async ({ mem }) => {
-    knownBug("readOnlineBytes uses the first 'ready' replica; a deleted original gives 500 even though the USB copy exists");
     const { root, usb } = await twoPlaces(mem);
     const file = await mem.fileByName("First dance.jpg");
     await mem.json("POST", `/files/${file.id}/copy`, { destDriveId: usb.id });
     await rm(join(root, "Wedding", "First dance.jpg"));
     const res = await mem.api.get(`/files/${file.id}/media`);
     expect(res.status()).toBe(200);
+    expect(Buffer.from(await res.body()).equals(await readFile(join(mem.path("Volumes", "TRAVEL"), "Wedding", "First dance.jpg")))).toBe(true);
+  });
+
+  test("media is a 404 without a server path when every connected copy was deleted", async ({ mem }) => {
+    const { root } = await twoPlaces(mem);
+    const file = await mem.fileByName("First dance.jpg");
+    await rm(join(root, "Wedding", "First dance.jpg"));
+    const res = await mem.api.get(`/files/${file.id}/media`);
+    expect(res.status()).toBe(404);
+    expect(JSON.stringify(await res.json())).not.toContain(root);
+  });
+
+  test("non-ASCII names keep their real name in Content-Disposition", async ({ mem }) => {
+    const root = await mem.place("Pictures", { "Adam’s birthday 🎂.jpg": jpeg("adam") });
+    await mem.addAndIngest({ name: "Pics", kind: "computer", rootPath: root });
+    const file = await mem.fileByName("Adam’s birthday 🎂.jpg");
+    const res = await mem.api.get(`/files/${file.id}/media`);
+    expect(res.headers()["content-disposition"]).toContain(`filename*=UTF-8''${encodeURIComponent("Adam’s birthday 🎂.jpg")}`);
   });
 
   test("a missing file on disk is a 404, not a 500 with a server path", async ({ mem }) => {
-    knownBug("ENOENT from disk surfaces as 500 (library) or 400 (drive media) and leaks absolute server paths");
     const root = await mem.place("Pictures", { "a.jpg": jpeg("a") });
     const drive = await mem.addAndIngest({ name: "Pics", kind: "computer", rootPath: root });
     const res = await mem.api.get(`/drives/${drive.id}/media?path=nope.jpg`);
@@ -103,7 +118,6 @@ test.describe("library (API)", () => {
   });
 
   test("creating a folder without a name is a 400", async ({ mem }) => {
-    knownBug("POST /folders has no validation; a missing name is a SQLite NOT NULL error returned as 500");
     expect((await mem.api.post("/folders", { data: {} })).status()).toBe(400);
   });
 });
@@ -170,12 +184,28 @@ test.describe("copy and move (API)", () => {
   });
 
   test("copy does not overwrite a different file already at the destination path", async ({ mem }) => {
-    knownBug("copy writes over whatever is at the destination path; an unrelated file with the same name is destroyed");
     const { usb, usbVol } = await twoPlaces(mem);
     await writeFile(join(usbVol.mountPath, "notes.txt"), "precious, unrelated");
     const file = await mem.fileByName("notes.txt");
-    await mem.api.post(`/files/${file.id}/copy`, { data: { destDriveId: usb.id } });
+    const res = await mem.api.post(`/files/${file.id}/copy`, { data: { destDriveId: usb.id } });
+    expect(res.status()).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ skipped: true, relativePath: "notes.txt" });
+    expect(body.error).toMatch(/^Skipped: Travel USB already has a different file called “notes.txt”/);
     expect((await readFile(join(usbVol.mountPath, "notes.txt"))).toString()).toBe("precious, unrelated");
+    expect((await mem.detail(file.id)).replicas).toHaveLength(1);
+  });
+
+  test("relocate onto a name that is taken is skipped and keeps the original", async ({ mem }) => {
+    const { root, pics } = await twoPlaces(mem);
+    const file = await mem.fileByName("notes.txt");
+    const notes = await readFile(join(root, "notes.txt"));
+    const budget = await readFile(join(root, "Budget 2026.xlsx"));
+    const res = await mem.api.post(`/files/${file.id}/relocate`, { data: { destDriveId: pics.id, destRelativePath: "Budget 2026.xlsx" } });
+    expect(res.status()).toBe(409);
+    expect((await res.json()).skipped).toBe(true);
+    expect((await readFile(join(root, "notes.txt"))).equals(notes)).toBe(true);
+    expect((await readFile(join(root, "Budget 2026.xlsx"))).equals(budget)).toBe(true);
   });
 });
 
@@ -188,7 +218,7 @@ test.describe("backup (API)", () => {
     expect([none.status(), (await none.json()).error]).toEqual([400, "Choose a folder to copy"]);
     const unknown = await mem.api.post("/backups", { data: { sourceDriveId: "drv_nope", destDriveId: usb.id, sourceRelativePaths: [""] } });
     expect(unknown.status()).toBe(404);
-    expect((await mem.api.post("/backups/job_nope/run")).status()).toBe(404);
+    expect((await mem.api.post("/backups/job_nope/run", { data: {} })).status()).toBe(404);
   });
 
   test("keeps a parent folder and drops folders inside it", async ({ mem }) => {
@@ -202,12 +232,12 @@ test.describe("backup (API)", () => {
   test("copies only the chosen folders, then skips what is already safe", async ({ mem }) => {
     const { root, pics, usb, usbVol } = await twoPlaces(mem);
     const job = await mem.saveBackup(pics.id, usb.id, ["Wedding", "School"]);
-    expect(await mem.runBackup(job.id)).toEqual({ copied: 4, skipped: 0 });
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 4, skipped: 0, conflicts: [] });
     for (const rel of ["Wedding/First dance.jpg", "Wedding/Garden vows.jpg", "Wedding/Speeches.mp4", "School/School report 2026.pdf"]) {
       expect(sha256(await readFile(join(usbVol.mountPath, rel))), rel).toBe(sha256(await readFile(join(root, rel))));
     }
     await expect(readFile(join(usbVol.mountPath, "notes.txt"))).rejects.toThrow();
-    expect(await mem.runBackup(job.id)).toEqual({ copied: 0, skipped: 4 });
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 0, skipped: 4, conflicts: [] });
     expect((await mem.backups())[0]!.lastRunAt).not.toBeNull();
   });
 
@@ -216,7 +246,7 @@ test.describe("backup (API)", () => {
     const job = await mem.saveBackup(pics.id, usb.id, ["Wedding"]);
     await mem.runBackup(job.id);
     await writeFile(join(root, "Wedding", "Cake.jpg"), jpeg("cake"));
-    expect(await mem.runBackup(job.id)).toEqual({ copied: 1, skipped: 3 });
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 1, skipped: 3, conflicts: [] });
     expect(sha256(await readFile(join(usbVol.mountPath, "Wedding", "Cake.jpg")))).toBe(sha256(jpeg("cake")));
     expect((await mem.fileByName("Cake.jpg")).inbox).toBe(true);
   });
@@ -224,7 +254,7 @@ test.describe("backup (API)", () => {
   test("backs up the whole place when the root is chosen", async ({ mem }) => {
     const { pics, usb } = await twoPlaces(mem);
     const job = await mem.saveBackup(pics.id, usb.id, [""]);
-    expect(await mem.runBackup(job.id)).toEqual({ copied: 8, skipped: 0 });
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 8, skipped: 0, conflicts: [] });
   });
 
   test("refuses to run when either side is unplugged", async ({ mem }) => {
@@ -232,18 +262,38 @@ test.describe("backup (API)", () => {
     const job = await mem.saveBackup(pics.id, usb.id, ["Wedding"]);
     await mem.unplug(usbVol.volumeId);
     await mem.drives();
-    const res = await mem.api.post(`/backups/${job.id}/run`);
+    const res = await mem.api.post(`/backups/${job.id}/run`, { data: {} });
     expect([res.status(), (await res.json()).error]).toEqual([400, "Destination drive is offline"]);
     expect((await mem.backups())[0]!.lastRunAt).toBeNull();
   });
 
   test("a chosen folder that has disappeared fails the backup instead of reporting success", async ({ mem }) => {
-    knownBug("a missing source folder walks as empty: the run returns {copied: 0, skipped: 0} and stamps lastRunAt");
     const { root, pics, usb } = await twoPlaces(mem);
     const job = await mem.saveBackup(pics.id, usb.id, ["Wedding"]);
     await rename(join(root, "Wedding"), join(root, "Wedding (old)"));
-    const res = await mem.api.post(`/backups/${job.id}/run`);
-    expect(res.status()).toBeGreaterThanOrEqual(400);
+    const res = await mem.api.post(`/backups/${job.id}/run`, { data: {} });
+    expect(res.status()).toBe(404);
+    expect((await res.json()).error).toMatch(/Can’t find “Wedding” on Pictures/);
+    expect((await mem.backups())[0]!.lastRunAt).toBeNull();
+  });
+
+  test("a different file with the same name on the destination is skipped and reported, never overwritten", async ({ mem }) => {
+    const { pics, usb, usbVol } = await twoPlaces(mem);
+    await writeFile(join(usbVol.mountPath, "notes.txt"), "precious, unrelated");
+    const job = await mem.saveBackup(pics.id, usb.id, [""]);
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 7, skipped: 1, conflicts: ["notes.txt"] });
+    expect((await readFile(join(usbVol.mountPath, "notes.txt"))).toString()).toBe("precious, unrelated");
+    const notes = await mem.detail((await mem.fileByName("notes.txt")).id);
+    expect(notes.replicas.map((row) => row.drive.id)).toEqual([pics.id]);
+  });
+
+  test("the same file already at the destination path is recognised, not copied again", async ({ mem }) => {
+    const { root, pics, usb, usbVol } = await twoPlaces(mem);
+    await writeFile(join(usbVol.mountPath, "notes.txt"), await readFile(join(root, "notes.txt")));
+    const job = await mem.saveBackup(pics.id, usb.id, [""]);
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 7, skipped: 1, conflicts: [] });
+    const notes = await mem.detail((await mem.fileByName("notes.txt")).id);
+    expect(notes.replicas.map((row) => row.drive.id).sort()).toEqual([pics.id, usb.id].sort());
   });
 
   test("survives an API restart on the same catalog", async ({ mem }) => {
@@ -275,7 +325,7 @@ test.describe("backup (API)", () => {
     const usbVol = await mem.plugDrive("TRAVEL");
     const usb = await mem.addPlace({ name: "Travel USB", kind: "usb", rootPath: usbVol.mountPath });
     const job = await mem.saveBackup(docs.id, usb.id, [""]);
-    expect(await mem.runBackup(job.id)).toEqual({ copied: 3, skipped: 0 });
+    expect(await mem.runBackup(job.id)).toEqual({ copied: 3, skipped: 0, conflicts: [] });
     expect([...(await readFile(join(usbVol.mountPath, "c.bin")))]).toEqual([0, 1, 2, 255]);
   });
 });

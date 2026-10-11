@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "../../support/fixtures.js";
 import { familyPictures, jpeg, sha256 } from "../../support/places.js";
@@ -55,6 +55,28 @@ test.describe("backup (UI)", () => {
     await writeFile(join(root, "Wedding", "Cake.jpg"), jpeg("cake"));
     await card.getByRole("button", { name: "Back up now" }).click();
     await expect(card).toContainText("All done. 1 new file copied.");
+  });
+
+  test("a file skipped because of a name clash is reported on the card", async ({ app, mem }) => {
+    const [pics, usb] = [(await mem.drives()).find((d) => d.name === "Pictures")!, (await mem.drives()).find((d) => d.name === "Travel USB")!];
+    await mem.saveBackup(pics.id, usb.id, ["Wedding"]);
+    await mkdir(join(usbMount, "Wedding"), { recursive: true });
+    await writeFile(join(usbMount, "Wedding", "Speeches.mp4"), "someone else's video");
+    await nav(app).getByRole("button", { name: "Backup" }).click();
+    const card = app.locator(".backup-card");
+    await card.getByRole("button", { name: "Back up now" }).click();
+    await expect(card).toContainText("All done. 2 new files copied. Skipped 1 file: Travel USB already has a different file with the same name.");
+    expect((await readFile(join(usbMount, "Wedding", "Speeches.mp4"))).toString()).toBe("someone else's video");
+  });
+
+  test("a backup whose folder was moved fails clearly", async ({ app, mem }) => {
+    const [pics, usb] = [(await mem.drives()).find((d) => d.name === "Pictures")!, (await mem.drives()).find((d) => d.name === "Travel USB")!];
+    await mem.saveBackup(pics.id, usb.id, ["Wedding"]);
+    await rename(join(root, "Wedding"), join(root, "Wedding 2025"));
+    await nav(app).getByRole("button", { name: "Backup" }).click();
+    await app.locator(".backup-card").getByRole("button", { name: "Back up now" }).click();
+    await expect(app.getByText("Can’t find “Wedding” on Pictures. It may have been moved or renamed.")).toBeVisible();
+    await expect(app.locator(".backup-card")).toContainText("Not backed up yet");
   });
 
   test("the card says when it last ran (frozen clock)", async ({ app, mem }) => {

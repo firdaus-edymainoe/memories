@@ -1,5 +1,5 @@
 import { rename } from "node:fs/promises";
-import { expect, knownBug, nextPoll, test } from "../../support/fixtures.js";
+import { expect, nextPoll, test } from "../../support/fixtures.js";
 import { familyPictures, jpeg } from "../../support/places.js";
 import { main, nav } from "../../support/ui.js";
 
@@ -63,7 +63,6 @@ test.describe("places (UI)", () => {
   });
 
   test("a computer folder that was moved away shows “Can’t find this folder”", async ({ app, mem }) => {
-    knownBug("presence ignores whether the folder exists; a moved Pictures folder still shows Ready");
     const root = await mem.place("Pictures", { "a.jpg": jpeg("a") });
     await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
     await rename(root, `${root} (moved)`);
@@ -72,14 +71,60 @@ test.describe("places (UI)", () => {
     await expect(card(app, "Pictures")).toContainText("Can’t find this folder", { timeout: 3000 });
   });
 
+  test("Locate… re-points a moved folder and keeps its files", async ({ app, mem }) => {
+    const root = await mem.place("Pictures", familyPictures());
+    const pics = await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
+    const ids = (await mem.files()).map((f) => f.id).sort();
+    await rename(root, `${root} (moved)`);
+    await nav(app).getByRole("button", { name: "Places" }).click();
+    await nextPoll(app);
+    await expect(card(app, "Pictures")).toContainText("Can’t find this folder", { timeout: 3000 });
+    await mem.queuePicker(`${root} (moved)`);
+    await card(app, "Pictures").getByRole("button", { name: "Locate Pictures" }).click();
+    await expect(app.getByText("Found Pictures")).toBeVisible();
+    await expect(card(app, "Pictures")).toContainText("Ready");
+    await expect(card(app, "Pictures").getByRole("button", { name: "Back up" })).toBeVisible();
+    expect((await mem.drive(pics.id)).rootPath).toBe(`${root} (moved)`);
+    expect((await mem.files()).map((f) => f.id).sort()).toEqual(ids);
+    await app.getByRole("button", { name: "Open Pictures" }).click();
+    await expect(main(app).getByRole("button", { name: /Wedding/ })).toBeVisible();
+  });
+
+  test("Locate… with a cancelled picker changes nothing", async ({ app, mem }) => {
+    const root = await mem.place("Pictures", { "a.jpg": jpeg("a") });
+    const pics = await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
+    await rename(root, `${root} (moved)`);
+    await nav(app).getByRole("button", { name: "Places" }).click();
+    await nextPoll(app);
+    await card(app, "Pictures").getByRole("button", { name: "Locate Pictures" }).click();
+    await expect.poll(() => mem.pickerCalls()).toBe(1);
+    await expect(card(app, "Pictures")).toContainText("Can’t find this folder");
+    expect((await mem.drive(pics.id)).rootPath).toBe(root);
+  });
+
+  test("a USB stick whose folder is gone says “Can’t find this folder”, not Unplugged", async ({ app, mem }) => {
+    const usb = await mem.plugDrive("TRAVEL");
+    const folder = await mem.place("Volumes/TRAVEL/Photos", { "a.jpg": jpeg("a") });
+    await mem.addAndIngest({ name: "Travel photos", kind: "usb", rootPath: folder });
+    await rename(folder, `${folder} 2`);
+    await nav(app).getByRole("button", { name: "Places" }).click();
+    await nextPoll(app);
+    await expect(card(app, "Travel photos")).toContainText("Can’t find this folder", { timeout: 3000 });
+    await expect(card(app, "Travel photos").getByRole("button", { name: "Locate Travel photos" })).toBeVisible();
+    void usb;
+  });
+
   test("Places in the breadcrumb or the sidebar goes back to the list of places", async ({ app, mem }) => {
-    knownBug("go('places') only calls resetBrowse() when leaving Places, so both buttons keep you inside the place");
     const root = await mem.place("Pictures", familyPictures());
     await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
     await nav(app).getByRole("button", { name: "Places" }).click();
     await app.getByRole("button", { name: "Open Pictures" }).click();
     await expect(main(app).getByRole("button", { name: /Wedding/ })).toBeVisible();
     await app.getByRole("navigation", { name: "You are here" }).getByRole("button", { name: "Places" }).click();
+    await expect(app.getByRole("button", { name: "Open Pictures" })).toBeVisible({ timeout: 3000 });
+    await app.getByRole("button", { name: "Open Pictures" }).click();
+    await expect(main(app).getByRole("button", { name: /Wedding/ })).toBeVisible();
+    await nav(app).getByRole("button", { name: "Places", exact: true }).click();
     await expect(app.getByRole("button", { name: "Open Pictures" })).toBeVisible({ timeout: 3000 });
   });
 

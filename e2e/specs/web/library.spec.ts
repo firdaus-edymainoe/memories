@@ -1,4 +1,4 @@
-import { expect, knownBug, test } from "../../support/fixtures.js";
+import { expect, test } from "../../support/fixtures.js";
 import { familyPictures, jpeg, text } from "../../support/places.js";
 import { addPlaceViaUi, main, nav } from "../../support/ui.js";
 
@@ -37,27 +37,40 @@ test.describe("first run and adding a place (UI)", () => {
     await expect(dialog).toBeHidden();
   });
 
-  test("Choose folder opens the system folder picker", async ({ app }) => {
-    knownBug("POST /pick-folder is not implemented and Electron has no dialog IPC; the UI always falls back to a typed path");
+  test("Choose folder opens the system folder picker and uses the chosen folder", async ({ app, mem }) => {
+    const root = await mem.place("Pictures", familyPictures());
+    await mem.queuePicker(root);
     await nav(app).getByRole("button", { name: "Add a place" }).click();
     const dialog = app.getByRole("dialog");
     await dialog.getByRole("button", { name: /This computer/ }).click();
     const picked = app.waitForResponse((res) => res.url().endsWith("/pick-folder"));
     await dialog.getByRole("button", { name: /Choose folder/ }).click();
     expect((await picked).status()).toBe(200);
-    await expect(dialog.locator(".folder-pick.chosen")).toBeVisible({ timeout: 2000 });
+    await expect(dialog.locator(".folder-pick.chosen")).toBeVisible();
+    await expect(dialog.locator(".folder-pick.chosen")).toContainText("Pictures");
+    await expect(dialog.getByLabel("Call it")).toHaveValue("Pictures");
+    await dialog.getByRole("button", { name: "Add place" }).click();
+    await expect(app.getByText("Added Pictures")).toBeVisible();
+    expect((await mem.drives()).map((d) => d.rootPath)).toEqual([root]);
+    expect(await mem.pickerCalls()).toBe(1);
   });
 
-  test("adding a folder that does not exist tells the user", async ({ app, mem }) => {
-    knownBug("a non-existent folder is registered and shown as 'Ready' with 0 files instead of an error");
-    const ingest = app.waitForResponse((res) => res.url().endsWith("/ingest"));
+  test("cancelling the folder picker lets you type the location instead", async ({ app, mem }) => {
+    await nav(app).getByRole("button", { name: "Add a place" }).click();
+    const dialog = app.getByRole("dialog");
+    await dialog.getByRole("button", { name: /This computer/ }).click();
+    await dialog.getByRole("button", { name: /Choose folder/ }).click();
+    await expect(dialog.getByLabel("Folder location")).toBeVisible();
+    expect(await mem.pickerCalls()).toBe(1);
+  });
+
+  test("adding a folder that does not exist tells the user and adds nothing", async ({ app, mem }) => {
     await addPlaceViaUi(app, { kind: /This computer/, path: mem.path("does-not-exist"), name: "Ghost" });
-    await ingest;
-    await expect(app.getByText(/doesn’t exist|can’t find|couldn’t find|not found/i)).toBeVisible({ timeout: 3000 });
+    await expect(app.getByText("That folder doesn’t exist. Check the location and try again.")).toBeVisible();
+    expect(await mem.drives()).toEqual([]);
   });
 
-  test.describe("with sample photos stubbed", () => {
-    test.use({ stubExternalHosts: ["images.unsplash.com"] });
+  test.describe("welcome tour (photos bundled with the app)", () => {
 
   test("the welcome tour walks every scene and Get started opens Add a place", async ({ app }) => {
     await nav(app).getByRole("button", { name: "Welcome tour" }).click();
@@ -81,12 +94,13 @@ test.describe("first run and adding a place (UI)", () => {
   });
 
   test("the welcome tour works offline without fetching photos from the internet", async ({ app, externalRequests }) => {
-    knownBug("Welcome.tsx hot-links images.unsplash.com, so the 'everything stays on this computer' app calls the internet");
     await nav(app).getByRole("button", { name: "Welcome tour" }).click();
-    await expect(app.getByRole("dialog", { name: "Welcome to Memories" })).toBeVisible();
-    await app.waitForTimeout(500);
+    const dialog = app.getByRole("dialog", { name: "Welcome to Memories" });
+    await expect(dialog).toBeVisible();
+    await expect
+      .poll(() => dialog.locator("img").evaluateAll((imgs) => imgs.length > 0 && imgs.every((img) => (img as HTMLImageElement).naturalWidth > 0)))
+      .toBe(true);
     expect(externalRequests).toEqual([]);
-    externalRequests.length = 0;
   });
 });
 
@@ -165,7 +179,6 @@ test.describe("browsing the library (UI)", () => {
 
 test.describe("library edge cases (UI)", () => {
   test("a photo with a non-ASCII name shows its preview", async ({ app, mem }) => {
-    knownBug("media for names like “Adam’s birthday.jpg” returns 500 (Content-Disposition), so the tile and preview stay blank");
     const root = await mem.place("Pictures", { "Adam’s birthday.jpg": jpeg("adam") });
     await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
     const media = app.waitForResponse((res) => res.url().includes("/media"));

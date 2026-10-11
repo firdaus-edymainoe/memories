@@ -1,4 +1,4 @@
-import { expect, knownBug, test } from "../../support/fixtures.js";
+import { expect, test } from "../../support/fixtures.js";
 import { familyPictures } from "../../support/places.js";
 import { main, nav } from "../../support/ui.js";
 
@@ -56,7 +56,6 @@ test.describe("API failures (UI)", () => {
   });
 
   test("Settings still opens while the API is down", async ({ page, mem }) => {
-    knownBug("the 'getting ready' screen replaces every screen, so even Appearance settings are unreachable");
     await page.goto(mem.appUrl().replace(encodeURIComponent(mem.url), encodeURIComponent("http://127.0.0.1:9")));
     await expect(page.getByRole("heading", { name: "Memories is getting ready" })).toBeVisible();
     await nav(page).getByRole("button", { name: "Settings" }).click();
@@ -64,7 +63,6 @@ test.describe("API failures (UI)", () => {
   });
 
   test("the app recovers by itself when the API comes up after the UI", async ({ page, mem }) => {
-    knownBug("the first load failure is final: there is no retry, the user must quit and reopen");
     const root = await mem.place("Pictures", familyPictures());
     await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
     const apiPattern = new RegExp(`^${mem.url.replace(/[.]/g, "\\.")}/`);
@@ -76,9 +74,27 @@ test.describe("API failures (UI)", () => {
   });
 
   test("when the API is not running the message is friendly", async ({ page, mem }) => {
-    knownBug("the raw fetch error ('Failed to fetch') is shown instead of “Memories isn’t responding”");
     await page.goto(mem.appUrl().replace(encodeURIComponent(mem.url), encodeURIComponent("http://127.0.0.1:9")));
     await expect(page.locator(".hint")).toHaveText(/Memories isn’t responding/, { timeout: 3000 });
+  });
+
+  test("Try again reconnects as soon as the API answers", async ({ page, mem }) => {
+    const root = await mem.place("Pictures", familyPictures());
+    await mem.addAndIngest({ name: "Pictures", kind: "computer", rootPath: root });
+    const apiPattern = new RegExp(`^${mem.url.replace(/[.]/g, "\\.")}/`);
+    await page.route(apiPattern, (route) => route.abort("connectionrefused"));
+    await page.goto(mem.appUrl());
+    await expect(page.getByRole("heading", { name: "Memories is getting ready" })).toBeVisible();
+    await page.unroute(apiPattern);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(main(page).getByRole("button", { name: /First dance\.jpg/ })).toBeVisible({ timeout: 3000 });
+  });
+
+  test("appearance can be changed while the API is down", async ({ page, mem }) => {
+    await page.goto(mem.appUrl().replace(encodeURIComponent(mem.url), encodeURIComponent("http://127.0.0.1:9")));
+    await nav(page).getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("radio", { name: /Dark/ }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   });
 
   test("a server error loading the library is shown and a reload recovers", async ({ page, mem }) => {

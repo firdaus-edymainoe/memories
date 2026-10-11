@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, knownBug, test, type Mem } from "../../support/fixtures.js";
+import { expect, test, type Mem } from "../../support/fixtures.js";
 import { jpeg, text } from "../../support/places.js";
 
 async function onePlace(mem: Mem) {
@@ -68,7 +68,6 @@ test.describe("path safety (API)", () => {
   });
 
   test("a symlink inside a place cannot read files outside it", async ({ mem }) => {
-    knownBug("NodeFileIO checks the path string, not the real path: a symlink in a place reads anything on disk");
     const { root, drive } = await onePlace(mem);
     await symlink(mem.path("secret.txt"), join(root, "link.txt"));
     const res = await mem.api.get(`/drives/${drive.id}/media?path=link.txt`);
@@ -76,7 +75,6 @@ test.describe("path safety (API)", () => {
   });
 
   test("a symlinked folder inside a place cannot list outside it", async ({ mem }) => {
-    knownBug("directory symlinks inside a place list (and read) the folder they point to");
     const { root, drive } = await onePlace(mem);
     await symlink(mem.dir, join(root, "dirlink"));
     const res = await mem.api.get(`/drives/${drive.id}/entries?path=dirlink`);
@@ -100,18 +98,33 @@ test.describe("local API hardening (API)", () => {
   });
 
   test("a cross-origin 'simple' POST from a web page cannot change anything", async ({ mem }) => {
-    knownBug("no Origin/Content-Type check: a text/plain POST from any website is executed (CSRF), CORS only hides the reply");
     const res = await mem.api.post("/folders", {
       headers: { Origin: "http://evil.example", "Content-Type": "text/plain" },
       data: JSON.stringify({ name: "planted-by-a-website" }),
     });
     const { folders } = await mem.json<{ folders: { name: string }[] }>("GET", "/folders");
     expect(folders.map((f) => f.name)).not.toContain("planted-by-a-website");
-    expect(res.status()).toBeGreaterThanOrEqual(400);
+    expect(res.status()).toBe(403);
+  });
+
+  test("a JSON POST from a foreign origin is refused", async ({ mem }) => {
+    const res = await mem.api.post("/folders", { headers: { Origin: "http://evil.example" }, data: { name: "planted" } });
+    expect(res.status()).toBe(403);
+  });
+
+  test("changes that are not sent as JSON are refused even without an Origin", async ({ mem }) => {
+    const res = await mem.api.post("/folders", { headers: { "Content-Type": "text/plain" }, data: JSON.stringify({ name: "x" }) });
+    expect(res.status()).toBe(415);
+    const form = await mem.api.post("/sync", { form: { a: "1" } });
+    expect(form.status()).toBe(415);
+  });
+
+  test("the UI's own origin may still make changes", async ({ mem }) => {
+    const res = await mem.api.post("/folders", { headers: { Origin: "http://127.0.0.1:5173" }, data: { name: "Family" } });
+    expect(res.status()).toBe(201);
   });
 
   test("a cross-origin POST cannot register the whole disk as a place", async ({ mem }) => {
-    knownBug("CSRF: a website can register '/' as a place via text/plain POST, then trigger ingest/backup/relocate");
     await mem.api.post("/drives", {
       headers: { Origin: "http://evil.example", "Content-Type": "text/plain" },
       data: JSON.stringify({ name: "everything", kind: "computer", rootPath: "/" }),
@@ -120,15 +133,16 @@ test.describe("local API hardening (API)", () => {
   });
 
   test("requests with a foreign Host header are refused (DNS rebinding)", async ({ mem }) => {
-    knownBug("any Host header is accepted, so a rebinding domain can read the API's responses");
     const res = await rawGet(mem.server.port, "/drives", { Host: "attacker.example:80" });
     expect(res.status).toBe(403);
+    expect((await rawGet(mem.server.port, "/health", { Host: `localhost:${mem.server.port}` })).status).toBe(200);
   });
 
   test("the API does not list the whole computer outside registered places", async ({ mem }) => {
-    knownBug("GET /volumes/entries?mount=/ browses any folder on the system disk with no user choice involved");
     const res = await mem.api.get(`/volumes/entries?mount=${encodeURIComponent("/")}&path=etc`);
-    expect(res.status()).toBeGreaterThanOrEqual(400);
+    expect(res.status()).toBe(403);
+    const usbVol = await mem.plugDrive("TRAVEL");
+    expect((await mem.api.get(`/volumes/entries?mount=${encodeURIComponent(usbVol.mountPath)}`)).status()).toBe(403);
   });
 
   test("volume browsing refuses traversal and unknown mounts", async ({ mem }) => {
@@ -138,15 +152,17 @@ test.describe("local API hardening (API)", () => {
   });
 
   test("malformed JSON is a 400 with a friendly message", async ({ mem }) => {
-    knownBug("JSON parse errors bubble to onError and return 500 with the raw SyntaxError text");
     const res = await mem.api.post("/drives", { headers: { "Content-Type": "application/json" }, data: Buffer.from("not json") });
     expect(res.status()).toBe(400);
   });
 
   test("the folder picker endpoint the UI calls exists", async ({ mem }) => {
-    knownBug("MemoriesClient.pickFolder() calls POST /pick-folder, which the API does not implement (404)");
-    const res = await mem.api.post("/pick-folder");
-    expect(res.status()).not.toBe(404);
+    await mem.queuePicker("/Users/aisha/Pictures");
+    const res = await mem.api.post("/pick-folder", { data: {} });
+    expect([res.status(), await res.json()]).toEqual([200, { rootPath: "/Users/aisha/Pictures" }]);
+    const cancelled = await mem.api.post("/pick-folder", { data: {} });
+    expect(await cancelled.json()).toEqual({ rootPath: null });
+    expect(await mem.pickerCalls()).toBe(2);
   });
 
   test("unknown routes are 404 and never 500", async ({ mem }) => {
