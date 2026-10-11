@@ -3,12 +3,13 @@ import { useEffect, useState } from "react";
 import { Icon, type IconName } from "./icons.js";
 import { FileObject } from "./Tile.js";
 
-const PHOTOS = [
-  "https://images.unsplash.com/photo-1519741497674-611481863552?w=320&q=70",
-  "https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=320&q=70",
-  "https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=320&q=70",
-  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=320&q=70",
-];
+import cake from "./assets/welcome/cake.jpg";
+import garden from "./assets/welcome/garden.jpg";
+import wedding from "./assets/welcome/wedding.jpg";
+import beach from "./assets/welcome/beach.jpg";
+
+/** Bundled with the app: the tour works offline and never contacts another site. */
+const PHOTOS = [wedding, garden, cake, beach];
 
 const STEPS = [
   {
