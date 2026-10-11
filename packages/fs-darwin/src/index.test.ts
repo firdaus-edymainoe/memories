@@ -1,5 +1,5 @@
 import { MemoryCatalog, ingestFolder, listLibrary, registerDrive, runBackupJob, saveBackupJob } from "@memories/core";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,29 @@ describe("fs-darwin", () => {
     const io = new NodeFileIO();
     const root = await mkdtemp(join(tmpdir(), "mem-root-"));
     await expect(io.read(root, "../secret.txt")).rejects.toThrow(/escapes drive root/);
+  });
+
+  it("does not follow symlinks out of the registered folder", async () => {
+    const io = new NodeFileIO();
+    const root = await mkdtemp(join(tmpdir(), "mem-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "mem-out-"));
+    await writeFile(join(outside, "secret.txt"), "secret");
+    await symlink(join(outside, "secret.txt"), join(root, "link.txt"));
+    await symlink(outside, join(root, "linkdir"));
+    await expect(io.read(root, "link.txt")).rejects.toThrow(/escapes drive root/);
+    await expect(io.list(root, "linkdir")).rejects.toThrow(/escapes drive root/);
+    await expect(io.read(root, "linkdir/secret.txt")).rejects.toThrow(/escapes drive root/);
+    expect(await io.walk(root)).toEqual([]);
+  });
+
+  it("never overwrites an existing file when copying", async () => {
+    const io = new NodeFileIO();
+    const a = await mkdtemp(join(tmpdir(), "mem-a-"));
+    const b = await mkdtemp(join(tmpdir(), "mem-b-"));
+    await writeFile(join(a, "x.txt"), "new");
+    await writeFile(join(b, "x.txt"), "old");
+    await expect(io.copy({ fromRoot: a, fromRelative: "x.txt", toRoot: b, toRelative: "x.txt" })).rejects.toThrow();
+    expect(await readFile(join(b, "x.txt"), "utf8")).toBe("old");
   });
 
   it("lists one folder level", async () => {
