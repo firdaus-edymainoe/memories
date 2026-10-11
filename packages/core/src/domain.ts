@@ -11,6 +11,8 @@ export type Drive = {
   /** Physical volume id — presence only (replug). */
   volumeId: string;
   online: boolean;
+  /** Set by presence checks: the drive is plugged in but the folder is gone (moved, renamed, deleted). */
+  missing?: boolean;
 };
 
 export type ContentObject = {

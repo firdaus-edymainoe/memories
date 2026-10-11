@@ -65,6 +65,12 @@ export class MemoryCatalog implements CatalogPort {
     this.files.set(file.id, { ...file });
   }
 
+  async deleteFile(id: string) {
+    this.files.delete(id);
+    this.replicas = this.replicas.filter((replica) => replica.fileId !== id);
+    this.fileFolders.delete(id);
+  }
+
   async listReplicas(fileId: string) {
     return this.replicas.filter((replica) => replica.fileId === fileId);
   }
@@ -82,11 +88,6 @@ export class MemoryCatalog implements CatalogPort {
   }
 
   async upsertReplica(replica: Replica) {
-    const byFile = this.replicas.findIndex((row) => row.driveId === replica.driveId && row.fileId === replica.fileId);
-    if (byFile >= 0) {
-      this.replicas[byFile] = { ...replica };
-      return;
-    }
     const index = this.replicas.findIndex(
       (row) => row.driveId === replica.driveId && row.relativePath === replica.relativePath,
     );
@@ -249,8 +250,17 @@ export class MemoryFileIO implements FileIO {
     return this.require(rootPath, relativePath).bytes;
   }
 
+  /** A file, a folder made with mkdir/addFolder, or a folder implied by a file inside it. */
   async exists(rootPath: string, relativePath: string) {
-    return this.blobs.has(key(rootPath, relativePath));
+    const k = key(rootPath, relativePath);
+    if (this.blobs.has(k) || this.dirs.has(k)) return true;
+    const prefix = k.endsWith("::") ? k : `${k}/`;
+    return [...this.blobs.keys(), ...this.dirs].some((stored) => stored.startsWith(prefix));
+  }
+
+  /** Make an (empty) folder exist, e.g. a drive root before anything is copied onto it. */
+  addFolder(rootPath: string, relativePath = "") {
+    this.dirs.add(key(rootPath, relativePath));
   }
 
   async mkdir(rootPath: string, relativePath: string) {

@@ -13,7 +13,8 @@ export type {
 } from "./domain.js";
 export type { CatalogPort, CopyArgs, DirEntry, FileIO, FileStat, Ports, VolumePresence, Volumes } from "./ports.js";
 export { MemoryCatalog, MemoryFileIO, MemoryVolumes } from "./memory.js";
-export { relativeInsideRoot, childRelative, parentRelative } from "./paths.js";
+export { relativeInsideRoot, childRelative, parentRelative, isAbsoluteRoot } from "./paths.js";
+export { MemoriesError, badRequest, conflict, notFound, isNotFound, systemCode } from "./errors.js";
 export { kindFromName, mimeFromName, dayFromTakenAt } from "./kind.js";
 export {
   copyFileToDrive,
@@ -24,6 +25,8 @@ export {
   listDriveEntries,
   listVolumeEntries,
   listDrives,
+  locateDrive,
+  refreshDrive,
   listEvents,
   listLibrary,
   moveToFolder,

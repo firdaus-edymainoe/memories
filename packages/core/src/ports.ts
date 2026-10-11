@@ -31,10 +31,13 @@ export type CatalogPort = {
   getFile(id: string): Promise<LibraryFile | null>;
   getFileByHash(hash: string): Promise<LibraryFile | null>;
   upsertFile(file: LibraryFile): Promise<void>;
+  /** Remove a file with its replicas and folder links (its last copy is gone). */
+  deleteFile(id: string): Promise<void>;
 
   listReplicas(fileId: string): Promise<Replica[]>;
   listReplicasOnDrive(driveId: string): Promise<Replica[]>;
   findReplica(driveId: string, relativePath: string): Promise<Replica | null>;
+  /** Keyed by (driveId, relativePath): identical files at two paths on one drive are two replicas. */
   upsertReplica(replica: Replica): Promise<void>;
   deleteReplica(driveId: string, relativePath: string): Promise<void>;
 

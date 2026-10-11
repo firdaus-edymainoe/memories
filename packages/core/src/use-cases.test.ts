@@ -80,6 +80,7 @@ describe("copy and move", () => {
     volumes.connect({ volumeId: "usb", mountPath: "/USB", label: "USB" });
     fileIO.seed("/Mac/Family", "e2e/copy-me.jpg", "copy-bytes");
     fileIO.seed("/Mac/Family", "e2e/move-me.txt", "move-bytes");
+    fileIO.addFolder("/USB/Backup");
     const ports: Ports = { catalog, fileIO, volumes };
     const mac = await registerDrive(ports, { name: "Mac", kind: "computer", rootPath: "/Mac/Family", volumeId: "mac" });
     const usb = await registerDrive(ports, { name: "USB", kind: "usb", rootPath: "/USB/Backup", volumeId: "usb" });
@@ -127,6 +128,7 @@ describe("backup folders", () => {
     const volumes = new MemoryVolumes();
     volumes.connect({ volumeId: "phone", mountPath: "/phone", label: "Pixel" });
     volumes.connect({ volumeId: "ssd", mountPath: "/ssd", label: "SSD" });
+    fileIO.addFolder("/ssd");
     fileIO.seed("/phone", "DCIM/Camera/shot.jpg", "camera-bytes");
     fileIO.seed("/phone", "Download/notes.pdf", "notes-bytes");
     const ports: Ports = { catalog, fileIO, volumes };
@@ -151,6 +153,7 @@ describe("backup folders", () => {
     const volumes = new MemoryVolumes();
     volumes.connect({ volumeId: "phone", mountPath: "/phone", label: "Pixel" });
     volumes.connect({ volumeId: "ssd", mountPath: "/ssd", label: "SSD" });
+    fileIO.addFolder("/ssd");
     fileIO.seed("/phone", "Photos/old.jpg", "old-bytes");
     const ports: Ports = { catalog, fileIO, volumes };
     const phone = await registerDrive(ports, { name: "Pixel", kind: "phone", rootPath: "/phone", volumeId: "phone" });
@@ -178,6 +181,8 @@ describe("backup folders", () => {
     const volumes = new MemoryVolumes();
     volumes.connect({ volumeId: "a", mountPath: "/A", label: "A" });
     volumes.connect({ volumeId: "b", mountPath: "/B", label: "B" });
+    fileIO.addFolder("/A/x");
+    fileIO.addFolder("/B/x");
     const ports: Ports = { catalog, fileIO, volumes };
     const a = await registerDrive(ports, { name: "A", kind: "computer", rootPath: "/A/x", volumeId: "a" });
     const b = await registerDrive(ports, { name: "B", kind: "disk", rootPath: "/B/x", volumeId: "b" });

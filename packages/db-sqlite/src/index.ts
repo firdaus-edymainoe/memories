@@ -155,6 +155,12 @@ export class SqliteCatalog implements CatalogPort {
       .onConflictDoUpdate({ target: schema.files.id, set: file });
   }
 
+  async deleteFile(id: string) {
+    await this.db.delete(schema.replicas).where(eq(schema.replicas.fileId, id));
+    await this.db.delete(schema.fileFolders).where(eq(schema.fileFolders.fileId, id));
+    await this.db.delete(schema.files).where(eq(schema.files.id, id));
+  }
+
   async listReplicas(fileId: string): Promise<Replica[]> {
     const rows = await this.db.select().from(schema.replicas).where(eq(schema.replicas.fileId, fileId));
     return rows.map(toReplica);
@@ -174,42 +180,19 @@ export class SqliteCatalog implements CatalogPort {
   }
 
   async upsertReplica(replica: Replica) {
-    const [byFile] = await this.db
-      .select()
-      .from(schema.replicas)
-      .where(and(eq(schema.replicas.driveId, replica.driveId), eq(schema.replicas.fileId, replica.fileId)));
-    if (byFile) {
-      await this.db
-        .update(schema.replicas)
-        .set({
-          relativePath: replica.relativePath,
-          status: replica.status,
-          progress: replica.progress,
-        })
-        .where(and(eq(schema.replicas.driveId, replica.driveId), eq(schema.replicas.fileId, replica.fileId)));
-      return;
-    }
-    const existing = await this.findReplica(replica.driveId, replica.relativePath);
-    if (existing) {
-      await this.db
-        .update(schema.replicas)
-        .set({
-          fileId: replica.fileId,
-          status: replica.status,
-          progress: replica.progress,
-        })
-        .where(
-          and(eq(schema.replicas.driveId, replica.driveId), eq(schema.replicas.relativePath, replica.relativePath)),
-        );
-      return;
-    }
-    await this.db.insert(schema.replicas).values({
-      fileId: replica.fileId,
-      driveId: replica.driveId,
-      relativePath: replica.relativePath,
-      status: replica.status,
-      progress: replica.progress,
-    });
+    await this.db
+      .insert(schema.replicas)
+      .values({
+        fileId: replica.fileId,
+        driveId: replica.driveId,
+        relativePath: replica.relativePath,
+        status: replica.status,
+        progress: replica.progress,
+      })
+      .onConflictDoUpdate({
+        target: [schema.replicas.driveId, schema.replicas.relativePath],
+        set: { fileId: replica.fileId, status: replica.status, progress: replica.progress },
+      });
   }
 
   async deleteReplica(driveId: string, relativePath: string) {

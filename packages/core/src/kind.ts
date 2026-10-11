@@ -43,7 +43,11 @@ export function mimeFromName(name: string): string {
   return "application/octet-stream";
 }
 
+/** The calendar day a file was taken on, in the local time zone of this computer. */
 export function dayFromTakenAt(takenAt: string | null): string | null {
   if (!takenAt) return null;
-  return takenAt.slice(0, 10);
+  const date = new Date(takenAt);
+  if (Number.isNaN(date.getTime())) return takenAt.slice(0, 10) || null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
