@@ -141,17 +141,17 @@ describe("desktop host", () => {
 
     const parked = join(dir, "Camera.off");
     await rename(camera, parked);
-    await app.request("/sync", { method: "POST" });
-    const missing = await app.request(`/backups/${saved.job.id}/run`, { method: "POST" });
-    expect(missing.status).toBe(200);
-    expect(await missing.json()).toEqual({ copied: 0, skipped: 0 });
+    await app.request("/sync", { method: "POST", headers: { "content-type": "application/json" } });
+    const missing = await app.request(`/backups/${saved.job.id}/run`, { method: "POST", headers: { "content-type": "application/json" } });
+    expect(missing.status).toBe(400);
+    expect((await missing.json()).error).toMatch(/Can’t find the Camera folder/);
     expect(await exists(join(stick, "Photos", "new-shot.jpg"))).toBe(false);
 
     await rename(parked, camera);
-    await app.request("/sync", { method: "POST" });
-    const run = await app.request(`/backups/${saved.job.id}/run`, { method: "POST" });
+    await app.request("/sync", { method: "POST", headers: { "content-type": "application/json" } });
+    const run = await app.request(`/backups/${saved.job.id}/run`, { method: "POST", headers: { "content-type": "application/json" } });
     expect(run.status).toBe(200);
-    expect(await run.json()).toMatchObject({ copied: 1 });
+    expect(await run.json()).toMatchObject({ copied: 1, conflicts: [] });
     expect(await readFile(join(stick, "Photos", "new-shot.jpg"), "utf8")).toBe("shot-bytes");
   });
 });

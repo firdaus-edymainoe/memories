@@ -1,6 +1,6 @@
 import { MemoryCatalog, MemoryFileIO, MemoryVolumes } from "@memories/core";
 import { describe, expect, it } from "vitest";
-import { createApp } from "./index.js";
+import { contentDisposition, createApp } from "./index.js";
 
 function harness() {
   const fileIO = new MemoryFileIO();
@@ -66,6 +66,7 @@ describe("createApp", () => {
     volumes.connect({ volumeId: "usb", mountPath: "/USB", label: "USB" });
     fileIO.seed("/Mac/Family", "fresh.jpg", "fresh-photo");
     fileIO.seed("/Mac/Family", "shift.txt", "shift-doc");
+    fileIO.addFolder("/USB/Backup");
     const mac = await (
       await app.request("/drives", {
         method: "POST",
@@ -123,9 +124,11 @@ describe("createApp", () => {
   });
 
   it("rejects backup when destination is offline", async () => {
-    const { app, volumes } = harness();
+    const { app, volumes, fileIO } = harness();
     volumes.connect({ volumeId: "a", mountPath: "/A", label: "A" });
     volumes.connect({ volumeId: "b", mountPath: "/B", label: "B" });
+    fileIO.addFolder("/A/x");
+    fileIO.addFolder("/B/x");
     const a = await (
       await app.request("/drives", {
         method: "POST",
@@ -152,8 +155,48 @@ describe("createApp", () => {
       })
     ).json();
     volumes.disconnect("b");
-    await app.request("/sync", { method: "POST" });
-    const run = await app.request(`/backups/${job.job.id}/run`, { method: "POST" });
+    await app.request("/sync", { method: "POST", headers: { "content-type": "application/json" } });
+    const run = await app.request(`/backups/${job.job.id}/run`, { method: "POST", headers: { "content-type": "application/json" } });
     expect(run.status).toBe(400);
+  });
+
+  it("only answers local Host names", async () => {
+    const { app } = harness();
+    expect((await app.request("http://127.0.0.1:47821/health")).status).toBe(200);
+    expect((await app.request("http://localhost:47821/health")).status).toBe(200);
+    expect((await app.request("http://attacker.example/health")).status).toBe(403);
+  });
+
+  it("refuses foreign origins and changes that are not JSON", async () => {
+    const { app } = harness();
+    const evil = await app.request("/folders", {
+      method: "POST",
+      headers: { origin: "http://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    expect(evil.status).toBe(403);
+    const plain = await app.request("/folders", { method: "POST", headers: { "content-type": "text/plain" }, body: '{"name":"x"}' });
+    expect(plain.status).toBe(415);
+    const ok = await app.request("/folders", {
+      method: "POST",
+      headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    expect(ok.status).toBe(201);
+  });
+
+  it("answers bad JSON with 400", async () => {
+    const { app } = harness();
+    const res = await app.request("/drives", { method: "POST", headers: { "content-type": "application/json" }, body: "{nope" });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("contentDisposition", () => {
+  it("keeps an ASCII fallback and the UTF-8 name", () => {
+    expect(contentDisposition("Adam’s birthday.jpg")).toBe(
+      "inline; filename=\"Adam_s birthday.jpg\"; filename*=UTF-8''Adam%E2%80%99s%20birthday.jpg",
+    );
+    expect(contentDisposition('a"b.jpg')).toBe("inline; filename=\"a_b.jpg\"; filename*=UTF-8''a%22b.jpg");
   });
 });
