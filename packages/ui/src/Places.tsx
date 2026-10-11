@@ -283,7 +283,8 @@ export function AddPlaceDialog({
     const picked = await onPickFolder();
     if (picked) {
       setPath(picked);
-      if (!name) setName(pathLeaf(picked));
+      // Name it after the folder unless the user already typed their own name.
+      if (!name || Object.values(PLACE_KIND).some((kind) => kind.label === name)) setName(pathLeaf(picked));
     } else setTyping(true);
   };
 
