@@ -14,6 +14,8 @@ const api = params.get("api") || "/api";
 function useDemoData() {
   if (params.get("live") === "1") return false;
   if (params.has("demo")) return true;
+  // Pointing the UI at an API (the desktop app does) means the real catalog.
+  if (params.has("api")) return false;
   return import.meta.env.VITE_MEMORIES_DEMO === "true";
 }
 
