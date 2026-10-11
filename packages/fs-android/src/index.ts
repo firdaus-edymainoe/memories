@@ -3,6 +3,7 @@ export { AndroidVolumes } from "./volumes.js";
 export { MergeVolumes, SwitchFileIO } from "./switch.js";
 export { PhoneFileIO, PhoneVolumes } from "./phone.js";
 export { MtpFileIO, MtpVolumes, isMtpFolder } from "./mtp.js";
+export type { MtpClient, MtpDeviceInfo, MtpHost, MtpObject } from "./mtp.js";
 export { UsbMtpHost, parseStorageIds, encodeObjectInfo } from "./mtp-usb.js";
 export { WpdMtpHost, parseWpdPnpId, pickWpdRoot } from "./mtp-wpd.js";
 export { LibmtpHost, libmtpDylibPath, DEVICE_FLAGS_ANDROID_BUGS } from "./mtp-libmtp.js";
