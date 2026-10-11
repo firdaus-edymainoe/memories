@@ -1,0 +1,63 @@
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-e2e:
+    name: Desktop e2e (API + UI + Electron)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: "1"
+      TZ: Asia/Kuala_Lumpur
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # npm 11 does not run install scripts unless they are allow-listed; make sure the
+      # native pieces the desktop API and Electron need are actually present.
+      - name: Native modules and Electron binary
+        run: |
+          node -e "require('better-sqlite3')" || npm rebuild better-sqlite3
+          node node_modules/electron/install.js
+          node -e "console.log(require('electron'))"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium and system deps
+        run: npx playwright install --with-deps chromium
+
+      - name: Install virtual display
+        run: sudo apt-get install -y xvfb
+
+      - name: Run e2e suite
+        run: npm run test:e2e:xvfb
+
+      - name: Upload report and traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/.report
+            e2e/.results
+          retention-days: 14

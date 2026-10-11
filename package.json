@@ -2,10 +2,22 @@
   "name": "memories",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "dev:ui": "npm run dev -w @memories/ui",
-    "dev:api": "npm start -w @memories/desktop"
+    "dev:api": "npm start -w @memories/desktop",
+    "test:e2e": "playwright test",
+    "test:e2e:api": "playwright test --project=api",
+    "test:e2e:web": "playwright test --project=web",
+    "test:e2e:electron": "playwright test --project=electron",
+    "test:e2e:xvfb": "xvfb-run -a playwright test",
+    "test:e2e:report": "playwright show-report e2e/.report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0"
   }
 }
