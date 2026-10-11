@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld("memoriesChrome", {
   close() {
     ipcRenderer.send("memories-window", "close");
   },
+  pickFolder() {
+    return ipcRenderer.invoke("memories-pick-folder");
+  },
   isMaximized() {
     return ipcRenderer.invoke("memories-maximized");
   },
