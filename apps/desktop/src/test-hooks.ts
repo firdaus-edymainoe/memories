@@ -151,7 +151,17 @@ const noAdb = async (): Promise<never> => {
   throw new Error("adb is disabled in test mode");
 };
 
-export type TestState = { ports: Ports; volumes: TestVolumes; mtp: FakeMtpHost; catalogPath: string };
+/** Stand-in for the system folder picker: answers with queued paths (null = the user cancelled). */
+export class FakePicker {
+  queue: (string | null)[] = [];
+  calls = 0;
+  pick = async () => {
+    this.calls += 1;
+    return this.queue.length ? (this.queue.shift() ?? null) : null;
+  };
+}
+
+export type TestState = { ports: Ports; volumes: TestVolumes; mtp: FakeMtpHost; picker: FakePicker; catalogPath: string };
 
 export async function createTestPorts(catalogPath: string): Promise<TestState> {
   const catalog = new SqliteCatalog(catalogPath);
@@ -168,7 +178,7 @@ export async function createTestPorts(catalogPath: string): Promise<TestState> {
     fileIO: new SwitchFileIO(local as FileIO, phoneIO),
     volumes: new MergeVolumes(volumes, phoneVolumes),
   };
-  return { ports, volumes, mtp, catalogPath };
+  return { ports, volumes, mtp, picker: new FakePicker(), catalogPath };
 }
 
 export function requireTestCatalogPath(): string {
@@ -179,25 +189,18 @@ export function requireTestCatalogPath(): string {
   return resolve(path);
 }
 
-/** Exit when the test runner that spawned us goes away, so a killed run leaves no stray API. */
-export function exitWithParent() {
-  const parent = Number(process.env.MEMORIES_TEST_PARENT_PID);
-  if (!parent) return;
-  setInterval(() => {
-    try {
-      process.kill(parent, 0);
-    } catch {
-      process.exit(0);
-    }
-  }, 2000).unref();
-}
-
 /** Routes under /__test. Only mounted in test mode. */
 export function createTestRoutes(state: TestState) {
   const app = new Hono();
 
   app.get("/__test/state", async (c) =>
-    c.json({ testMode: true, catalogPath: state.catalogPath, volumes: state.volumes.present, phones: state.mtp.phones }),
+    c.json({
+      testMode: true,
+      catalogPath: state.catalogPath,
+      volumes: state.volumes.present,
+      phones: state.mtp.phones,
+      picker: { queue: state.picker.queue, calls: state.picker.calls },
+    }),
   );
 
   app.post("/__test/reset", async (c) => {
@@ -214,6 +217,8 @@ export function createTestRoutes(state: TestState) {
     }
     state.volumes.present = [...DEFAULT_TEST_VOLUMES];
     state.mtp.phones = [];
+    state.picker.queue = [];
+    state.picker.calls = 0;
     return c.json({ ok: true });
   });
 
@@ -227,6 +232,12 @@ export function createTestRoutes(state: TestState) {
     const body = await c.req.json<{ phones: FakePhone[] }>();
     state.mtp.phones = body.phones.map((phone) => ({ ...phone, serial: phone.serial ?? null }));
     return c.json({ phones: state.mtp.phones });
+  });
+
+  app.put("/__test/picker", async (c) => {
+    const body = await c.req.json<{ paths: (string | null)[] }>();
+    state.picker.queue = [...body.paths];
+    return c.json({ queue: state.picker.queue });
   });
 
   return app;
