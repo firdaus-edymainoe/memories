@@ -135,6 +135,21 @@ export function shortDate(iso: string | null) {
   return date.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
+/** "Today, 14:05", "Yesterday, 09:30", "3 days ago", or a date. */
+export function whenLabel(iso: string | null) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const days = Math.floor((startOfToday.getTime() - new Date(date).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days <= 0) return `Today, ${time}`;
+  if (days === 1) return `Yesterday, ${time}`;
+  if (days < 7) return `${days} days ago`;
+  return shortDate(iso);
+}
+
 export function friendlySince(iso: string | null) {
   if (!iso) return "Not backed up yet";
   const then = new Date(iso).getTime();

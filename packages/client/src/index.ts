@@ -1,5 +1,8 @@
 import type {
   BackupJob,
+  BackupRun,
+  DeleteResult,
+  ExportResult,
   DirEntry,
   Drive,
   DriveKind,
@@ -18,49 +21,129 @@ async function parse<T>(response: Response | Promise<Response>): Promise<T> {
   return body;
 }
 
+/** Header carrying the per-launch secret that protects the local API. */
+export const TOKEN_HEADER = "x-memories-token";
+
 export class MemoriesClient {
-  constructor(private readonly baseUrl: string) {}
+  /**
+   * @param token Per-launch secret from the desktop app. Sent on every call, and as a `token`
+   * query parameter on media URLs (which the browser loads directly).
+   */
+  constructor(
+    private readonly baseUrl: string,
+    private readonly token: string | null = null,
+  ) {}
 
   mediaUrl(fileId: string) {
-    return `${this.baseUrl}/files/${fileId}/media`;
+    return this.withToken(`${this.baseUrl}/files/${fileId}/media`);
   }
 
   driveMediaUrl(driveId: string, relativePath: string) {
     const params = new URLSearchParams();
     params.set("path", relativePath);
-    return `${this.baseUrl}/drives/${driveId}/media?${params.toString()}`;
+    return this.withToken(`${this.baseUrl}/drives/${driveId}/media?${params.toString()}`);
+  }
+
+  /** A small preview for grids; falls back to the original when previews are unavailable. */
+  thumbUrl(fileId: string) {
+    return this.withToken(`${this.baseUrl}/files/${fileId}/thumb`);
+  }
+
+  driveThumbUrl(driveId: string, relativePath: string) {
+    const params = new URLSearchParams();
+    params.set("path", relativePath);
+    return this.withToken(`${this.baseUrl}/drives/${driveId}/thumb?${params.toString()}`);
+  }
+
+  /** An older version of a file, read from whichever drive still holds it. */
+  versionMediaUrl(fileId: string, objectHash: string) {
+    return this.withToken(`${this.baseUrl}/files/${fileId}/versions/${objectHash}/media`);
+  }
+
+  private post<T>(path: string, body: unknown = {}) {
+    return parse<T>(
+      this.fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  trash() {
+    return parse<{ files: LibraryFile[] }>(this.fetch(`${this.baseUrl}/trash`)).then((b) => b.files);
+  }
+
+  moveToTrash(fileIds: string[]) {
+    return this.post<{ moved: number }>("/trash", { fileIds }).then((b) => b.moved);
+  }
+
+  restoreFromTrash(fileIds: string[]) {
+    return this.post<{ restored: number }>("/trash/restore", { fileIds }).then((b) => b.restored);
+  }
+
+  deleteForever(fileIds: string[]) {
+    return this.post<DeleteResult>("/trash/delete", { fileIds });
+  }
+
+  emptyTrash() {
+    return this.post<DeleteResult>("/trash/empty");
+  }
+
+  exportFiles(input: { fileIds: string[]; rootPath: string; objectHash?: string }) {
+    return this.post<ExportResult>("/export", input);
+  }
+
+  setBackupAuto(id: string, auto: boolean) {
+    return this.post<{ job: BackupJob }>(`/backups/${id}/auto`, { auto }).then((b) => b.job);
+  }
+
+  backupRuns(limit = 20) {
+    return parse<{ runs: BackupRun[] }>(this.fetch(`${this.baseUrl}/backup-runs?limit=${limit}`)).then((b) => b.runs);
+  }
+
+  private withToken(url: string) {
+    if (!this.token) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(this.token)}`;
+  }
+
+  private fetch(url: string, init: RequestInit = {}) {
+    if (!this.token) return fetch(url, init);
+    const headers = new Headers(init.headers);
+    headers.set(TOKEN_HEADER, this.token);
+    return fetch(url, { ...init, headers });
   }
 
   pickFolder() {
-    return parse<{ rootPath: string | null }>(fetch(`${this.baseUrl}/pick-folder`, { method: "POST" })).then(
+    return parse<{ rootPath: string | null }>(this.fetch(`${this.baseUrl}/pick-folder`, { method: "POST" })).then(
       (b) => b.rootPath,
     );
   }
 
   health() {
-    return parse<{ ok: boolean }>(fetch(`${this.baseUrl}/health`));
+    return parse<{ ok: boolean }>(this.fetch(`${this.baseUrl}/health`));
   }
 
   volumes() {
-    return parse<{ volumes: VolumePresence[] }>(fetch(`${this.baseUrl}/volumes`)).then((b) => b.volumes);
+    return parse<{ volumes: VolumePresence[] }>(this.fetch(`${this.baseUrl}/volumes`)).then((b) => b.volumes);
   }
 
   volumeEntries(mountPath: string, relativePath = "") {
     const params = new URLSearchParams();
     params.set("mount", mountPath);
     if (relativePath) params.set("path", relativePath);
-    return parse<{ entries: DirEntry[] }>(fetch(`${this.baseUrl}/volumes/entries?${params.toString()}`)).then(
+    return parse<{ entries: DirEntry[] }>(this.fetch(`${this.baseUrl}/volumes/entries?${params.toString()}`)).then(
       (b) => b.entries,
     );
   }
 
   drives() {
-    return parse<{ drives: Drive[] }>(fetch(`${this.baseUrl}/drives`)).then((b) => b.drives);
+    return parse<{ drives: Drive[] }>(this.fetch(`${this.baseUrl}/drives`)).then((b) => b.drives);
   }
 
   registerDrive(input: { name: string; kind: DriveKind; rootPath: string; volumeId?: string }) {
     return parse<{ drive: Drive }>(
-      fetch(`${this.baseUrl}/drives`, {
+      this.fetch(`${this.baseUrl}/drives`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
@@ -69,7 +152,7 @@ export class MemoriesClient {
   }
 
   driveFolders(driveId: string) {
-    return parse<{ folders: string[] }>(fetch(`${this.baseUrl}/drives/${driveId}/folders`)).then((b) => b.folders);
+    return parse<{ folders: string[] }>(this.fetch(`${this.baseUrl}/drives/${driveId}/folders`)).then((b) => b.folders);
   }
 
   driveEntries(driveId: string, relativePath = "") {
@@ -77,7 +160,7 @@ export class MemoriesClient {
     if (relativePath) params.set("path", relativePath);
     const q = params.toString();
     return parse<{ entries: DirEntry[] }>(
-      fetch(`${this.baseUrl}/drives/${driveId}/entries${q ? `?${q}` : ""}`),
+      this.fetch(`${this.baseUrl}/drives/${driveId}/entries${q ? `?${q}` : ""}`),
     ).then((b) => b.entries);
   }
 
@@ -86,20 +169,20 @@ export class MemoriesClient {
     if (query.kind) params.set("kind", query.kind);
     if (query.inbox !== undefined) params.set("inbox", String(query.inbox));
     const q = params.toString();
-    return parse<{ files: LibraryFile[] }>(fetch(`${this.baseUrl}/files${q ? `?${q}` : ""}`)).then((b) => b.files);
+    return parse<{ files: LibraryFile[] }>(this.fetch(`${this.baseUrl}/files${q ? `?${q}` : ""}`)).then((b) => b.files);
   }
 
   file(id: string) {
-    return parse<FileDetail>(fetch(`${this.baseUrl}/files/${id}`));
+    return parse<FileDetail>(this.fetch(`${this.baseUrl}/files/${id}`));
   }
 
   placeFile(id: string) {
-    return parse<{ file: LibraryFile }>(fetch(`${this.baseUrl}/files/${id}/place`, { method: "POST" })).then((b) => b.file);
+    return parse<{ file: LibraryFile }>(this.fetch(`${this.baseUrl}/files/${id}/place`, { method: "POST" })).then((b) => b.file);
   }
 
   copyFile(id: string, input: { destDriveId: string; destRelativePath?: string }) {
     return parse<{ replica: { fileId: string; driveId: string; relativePath: string } }>(
-      fetch(`${this.baseUrl}/files/${id}/copy`, {
+      this.fetch(`${this.baseUrl}/files/${id}/copy`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
@@ -109,7 +192,7 @@ export class MemoriesClient {
 
   relocateFile(id: string, input: { destDriveId: string; destRelativePath: string }) {
     return parse<{ replica: { fileId: string; driveId: string; relativePath: string } }>(
-      fetch(`${this.baseUrl}/files/${id}/relocate`, {
+      this.fetch(`${this.baseUrl}/files/${id}/relocate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
@@ -119,7 +202,7 @@ export class MemoriesClient {
 
   moveToFolder(id: string, folderId: string | null) {
     return parse<{ ok: boolean }>(
-      fetch(`${this.baseUrl}/files/${id}/move`, {
+      this.fetch(`${this.baseUrl}/files/${id}/move`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ folderId }),
@@ -128,12 +211,12 @@ export class MemoriesClient {
   }
 
   events() {
-    return parse<{ events: EventCluster[] }>(fetch(`${this.baseUrl}/events`)).then((b) => b.events);
+    return parse<{ events: EventCluster[] }>(this.fetch(`${this.baseUrl}/events`)).then((b) => b.events);
   }
 
   ingest(driveId: string, relativePath?: string) {
     return parse<{ files: number; replicas: number }>(
-      fetch(`${this.baseUrl}/ingest`, {
+      this.fetch(`${this.baseUrl}/ingest`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ driveId, relativePath }),
@@ -142,12 +225,12 @@ export class MemoriesClient {
   }
 
   folders() {
-    return parse<{ folders: VirtualFolder[] }>(fetch(`${this.baseUrl}/folders`)).then((b) => b.folders);
+    return parse<{ folders: VirtualFolder[] }>(this.fetch(`${this.baseUrl}/folders`)).then((b) => b.folders);
   }
 
   createFolder(name: string, parentId?: string | null) {
     return parse<{ folder: VirtualFolder }>(
-      fetch(`${this.baseUrl}/folders`, {
+      this.fetch(`${this.baseUrl}/folders`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, parentId }),
@@ -156,12 +239,12 @@ export class MemoriesClient {
   }
 
   backups() {
-    return parse<{ jobs: BackupJob[] }>(fetch(`${this.baseUrl}/backups`)).then((b) => b.jobs);
+    return parse<{ jobs: BackupJob[] }>(this.fetch(`${this.baseUrl}/backups`)).then((b) => b.jobs);
   }
 
   saveBackup(input: { sourceDriveId: string; destDriveId: string; sourceRelativePaths: string[] }) {
     return parse<{ job: BackupJob }>(
-      fetch(`${this.baseUrl}/backups`, {
+      this.fetch(`${this.baseUrl}/backups`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
@@ -170,10 +253,12 @@ export class MemoriesClient {
   }
 
   runBackup(id: string) {
-    return parse<{ copied: number; skipped: number }>(fetch(`${this.baseUrl}/backups/${id}/run`, { method: "POST" }));
+    return parse<{ copied: number; skipped: number; failed: number }>(
+      this.fetch(`${this.baseUrl}/backups/${id}/run`, { method: "POST" }),
+    );
   }
 
   sync() {
-    return parse<{ ok: boolean }>(fetch(`${this.baseUrl}/sync`, { method: "POST" }));
+    return parse<{ ok: boolean }>(this.fetch(`${this.baseUrl}/sync`, { method: "POST" }));
   }
 }

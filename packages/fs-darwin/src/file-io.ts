@@ -1,8 +1,19 @@
-import { kindFromName, mimeFromName, relativeInsideRoot, type DirEntry, type FileIO, type FileStat } from "@memories/core";
-import { createHash } from "node:crypto";
+import {
+  type ByteRange,
+  DestinationExistsError,
+  kindFromName,
+  mimeFromName,
+  relativeInsideRoot,
+  type DirEntry,
+  type FileIO,
+  type FileStat,
+} from "@memories/core";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { access, copyFile, mkdir, open, readdir, readFile, rename, rm, stat, unlink } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
+import { readDetails } from "./details.js";
 
 function resolveInside(rootPath: string, relativePath: string) {
   const rel = relativeInsideRoot(relativePath);
@@ -63,6 +74,21 @@ export class NodeFileIO implements FileIO {
     return readFile(resolveInside(rootPath, relativePath));
   }
 
+  describe(rootPath: string, relativePath: string) {
+    return readDetails(resolveInside(rootPath, relativePath));
+  }
+
+  async size(rootPath: string, relativePath: string) {
+    return (await stat(resolveInside(rootPath, relativePath))).size;
+  }
+
+  async stream(rootPath: string, relativePath: string, range?: ByteRange) {
+    const abs = resolveInside(rootPath, relativePath);
+    await stat(abs);
+    const nodeStream = createReadStream(abs, range ? { start: range.start, end: range.end } : {});
+    return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+  }
+
   async exists(rootPath: string, relativePath: string) {
     try {
       await access(resolveInside(rootPath, relativePath));
@@ -76,11 +102,34 @@ export class NodeFileIO implements FileIO {
     await mkdir(resolveInside(rootPath, relativePath), { recursive: true });
   }
 
+  /**
+   * Never overwrites and never leaves a half-written file behind: the name is reserved with an
+   * exclusive create, the bytes go to a temp file beside it, and a rename swaps it in. Only plain
+   * file operations are used, so it also works on exFAT/FAT32 drives.
+   */
   async copy(args: Parameters<FileIO["copy"]>[0]) {
     const from = resolveInside(args.fromRoot, args.fromRelative);
     const to = resolveInside(args.toRoot, args.toRelative);
     await mkdir(dirname(to), { recursive: true });
-    await copyFile(from, to);
+
+    try {
+      await (await open(to, "wx")).close();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new DestinationExistsError(relativeInsideRoot(args.toRelative));
+      }
+      throw error;
+    }
+
+    const temp = join(dirname(to), `.${basename(to)}.${randomUUID()}.part`);
+    try {
+      await copyFile(from, temp);
+      await rename(temp, to);
+    } catch (error) {
+      await rm(temp, { force: true });
+      await rm(to, { force: true });
+      throw error;
+    }
     args.onProgress?.(1);
   }
 
@@ -113,6 +162,7 @@ async function walkDir(current: string, rootAbs: string, out: FileStat[]) {
       kind: kindFromName(entry.name),
       takenAt: info.mtime.toISOString(),
       place: null,
+      modifiedAt: info.mtime.toISOString(),
     });
   }
 }

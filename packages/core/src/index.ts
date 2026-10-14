@@ -1,5 +1,9 @@
 export type {
   BackupJob,
+  BackupRun,
+  BackupRunStatus,
+  FileVersion,
+  PendingDeletion,
   ContentObject,
   Drive,
   DriveKind,
@@ -11,9 +15,21 @@ export type {
   ReplicaStatus,
   VirtualFolder,
 } from "./domain.js";
-export type { CatalogPort, CopyArgs, DirEntry, FileIO, FileStat, Ports, VolumePresence, Volumes } from "./ports.js";
+export type {
+  ByteRange,
+  CatalogPort,
+  CopyArgs,
+  DirEntry,
+  FileDetails,
+  FileIO,
+  FileStat,
+  Ports,
+  VolumePresence,
+  Volumes,
+} from "./ports.js";
+export { DestinationExistsError } from "./ports.js";
 export { MemoryCatalog, MemoryFileIO, MemoryVolumes } from "./memory.js";
-export { relativeInsideRoot, childRelative, parentRelative } from "./paths.js";
+export { relativeInsideRoot, childRelative, parentRelative, withCollisionSuffix } from "./paths.js";
 export { kindFromName, mimeFromName, dayFromTakenAt } from "./kind.js";
 export {
   copyFileToDrive,
@@ -23,6 +39,13 @@ export {
   listDriveFolders,
   listDriveEntries,
   listVolumeEntries,
+  openDriveFile,
+  openOnlineFile,
+  openVersionFile,
+  flushPendingDeletions,
+  isBackupRunning,
+  listBackupRuns,
+  setBackupAuto,
   listDrives,
   listEvents,
   listLibrary,
@@ -37,4 +60,7 @@ export {
   saveBackupJob,
   syncDrivePresence,
 } from "./use-cases.js";
-export type { FileDetail } from "./use-cases.js";
+export type { FileDetail, OpenedFile } from "./use-cases.js";
+export { deleteForever, emptyTrash, listTrash, restoreFiles, trashFiles, type DeleteResult } from "./trash.js";
+export { exportFiles, type ExportResult } from "./export.js";
+export { BackupScheduler } from "./scheduler.js";

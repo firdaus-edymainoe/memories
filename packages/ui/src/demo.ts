@@ -1,5 +1,5 @@
 import type { MemoriesClient } from "@memories/client";
-import type { BackupJob, DirEntry, Drive, EventCluster, FileKind, LibraryFile } from "@memories/core";
+import type { BackupJob, BackupRun, DirEntry, Drive, EventCluster, FileKind, LibraryFile } from "@memories/core";
 
 const IMG = [
   "photo-1519741497674-611481863552",
@@ -117,11 +117,41 @@ let jobs: BackupJob[] = [
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+let runs: BackupRun[] = [
+  {
+    id: "r2",
+    jobId: "j1",
+    trigger: "auto",
+    status: "done",
+    startedAt: "2026-09-12T20:00:00",
+    finishedAt: "2026-09-12T20:03:00",
+    copied: 14,
+    skipped: 120,
+    failed: 0,
+    error: null,
+  },
+  {
+    id: "r1",
+    jobId: "j2",
+    trigger: "manual",
+    status: "failed",
+    startedAt: "2026-09-10T18:30:00",
+    finishedAt: "2026-09-10T18:30:01",
+    copied: 0,
+    skipped: 0,
+    failed: 0,
+    error: "Destination drive is offline",
+  },
+];
+const trashed = new Map<string, string>();
+
 export function demoClient(): MemoriesClient {
   const byName = new Map(files.map((f) => [f.name, f.id]));
   return {
     mediaUrl: (id: string) => imageFor.get(id) ?? "",
+    thumbUrl: (id: string) => imageFor.get(id) ?? "",
     driveMediaUrl: (_drive: string, path: string) => imageFor.get(byName.get(path.split("/").pop() ?? "") ?? "") ?? "",
+    driveThumbUrl: (_drive: string, path: string) => imageFor.get(byName.get(path.split("/").pop() ?? "") ?? "") ?? "",
     pickFolder: async () => "/Users/aisha/Documents",
     health: async () => ({ ok: true }),
     volumes: async () => [{ volumeId: "mtp:2", mountPath: "mtp://2717-ff40", label: "Adam’s Pixel" }],
@@ -134,7 +164,41 @@ export function demoClient(): MemoriesClient {
     },
     driveFolders: async () => [],
     driveEntries: async (_id: string, path = "") => (await wait(350), tree[path] ?? []),
-    files: async () => files,
+    files: async () => files.filter((f) => !trashed.has(f.id)),
+    trash: async () => files.filter((f) => trashed.has(f.id)).map((f) => ({ ...f, trashedAt: trashed.get(f.id)! })),
+    moveToTrash: async (ids: string[]) => {
+      for (const id of ids) trashed.set(id, new Date().toISOString());
+      return ids.length;
+    },
+    restoreFromTrash: async (ids: string[]) => {
+      for (const id of ids) trashed.delete(id);
+      return ids.length;
+    },
+    deleteForever: async (ids: string[]) => {
+      await wait(500);
+      for (const id of ids) {
+        trashed.delete(id);
+        const index = files.findIndex((f) => f.id === id);
+        if (index >= 0) files.splice(index, 1);
+      }
+      return { deleted: ids.length, removed: ids.length * 2, waiting: ["Travel SSD"] };
+    },
+    emptyTrash: async () => {
+      const ids = [...trashed.keys()];
+      for (const id of ids) {
+        trashed.delete(id);
+        const index = files.findIndex((f) => f.id === id);
+        if (index >= 0) files.splice(index, 1);
+      }
+      return { deleted: ids.length, removed: ids.length * 2, waiting: [] };
+    },
+    exportFiles: async (input: { fileIds: string[] }) => (await wait(700), { exported: input.fileIds.length, failed: [] }),
+    versionMediaUrl: (id: string) => imageFor.get(id) ?? "",
+    backupRuns: async () => runs,
+    setBackupAuto: async (id: string, auto: boolean) => {
+      jobs = jobs.map((job) => (job.id === id ? { ...job, auto } : job));
+      return jobs.find((job) => job.id === id)!;
+    },
     file: async (id: string) => {
       const file = files.find((f) => f.id === id)!;
       return {
@@ -144,6 +208,24 @@ export function demoClient(): MemoriesClient {
           { replica: { fileId: id, driveId: "mac", relativePath: file.name, status: "ready", progress: null }, drive: drives[0]! },
           { replica: { fileId: id, driveId: "ssd", relativePath: file.name, status: "ready", progress: null }, drive: drives[2]! },
         ],
+        // A sample edited document, to show version history.
+        versions:
+          file.kind === "document" && Number(id.slice(1)) % 3 === 0
+            ? [
+                { fileId: id, version: 2, objectHash: file.objectHash, size: 412_000, createdAt: "2026-09-02T09:15:00", current: true, copies: [] },
+                {
+                  fileId: id,
+                  version: 1,
+                  objectHash: `${file.objectHash}-v1`,
+                  size: 388_000,
+                  createdAt: "2026-08-20T16:40:00",
+                  current: false,
+                  copies: [
+                    { replica: { fileId: id, driveId: "ssd", relativePath: file.name, status: "ready", progress: null }, drive: drives[2]! },
+                  ],
+                },
+              ]
+            : [],
       };
     },
     placeFile: async (id: string) => {
@@ -167,7 +249,12 @@ export function demoClient(): MemoriesClient {
     runBackup: async (id: string) => {
       await wait(2600);
       jobs = jobs.map((job) => (job.id === id ? { ...job, lastRunAt: new Date().toISOString() } : job));
-      return { copied: 14, skipped: 120 };
+      const now = new Date().toISOString();
+      runs = [
+        { id: `r${runs.length + 1}`, jobId: id, trigger: "manual", status: "done", startedAt: now, finishedAt: now, copied: 14, skipped: 120, failed: 0, error: null },
+        ...runs,
+      ];
+      return { copied: 14, skipped: 120, failed: 0 };
     },
     sync: async () => ({ ok: true }),
   } as unknown as MemoriesClient;

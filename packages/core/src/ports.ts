@@ -1,5 +1,8 @@
 import type {
   BackupJob,
+  BackupRun,
+  FileVersion,
+  PendingDeletion,
   ContentObject,
   Drive,
   FileQuery,
@@ -16,6 +19,8 @@ export type FileStat = {
   kind: FileKind;
   takenAt: string | null;
   place: string | null;
+  /** Last modification time (ISO 8601). Lets unchanged files skip re-hashing. */
+  modifiedAt?: string;
 };
 
 export type CatalogPort = {
@@ -31,6 +36,8 @@ export type CatalogPort = {
   getFile(id: string): Promise<LibraryFile | null>;
   getFileByHash(hash: string): Promise<LibraryFile | null>;
   upsertFile(file: LibraryFile): Promise<void>;
+  /** Removes a file with its copies, versions and folder link from the catalog. */
+  deleteFile(id: string): Promise<void>;
 
   listReplicas(fileId: string): Promise<Replica[]>;
   listReplicasOnDrive(driveId: string): Promise<Replica[]>;
@@ -46,6 +53,17 @@ export type CatalogPort = {
   listBackupJobs(): Promise<BackupJob[]>;
   getBackupJob(id: string): Promise<BackupJob | null>;
   upsertBackupJob(job: BackupJob): Promise<void>;
+
+  listVersions(fileId: string): Promise<FileVersion[]>;
+  addVersion(version: FileVersion): Promise<void>;
+
+  upsertBackupRun(run: BackupRun): Promise<void>;
+  /** Newest first. */
+  listBackupRuns(limit: number): Promise<BackupRun[]>;
+
+  addPendingDeletion(deletion: PendingDeletion): Promise<void>;
+  listPendingDeletions(driveId: string): Promise<PendingDeletion[]>;
+  removePendingDeletion(deletion: PendingDeletion): Promise<void>;
 };
 
 export type CopyArgs = {
@@ -64,6 +82,18 @@ export type DirEntry = {
   kind: FileKind | null;
 };
 
+/**
+ * Thrown by `FileIO.copy` when the destination already exists. Copies never overwrite: a backup
+ * must not be able to destroy a different file that happens to have the same name.
+ */
+export class DestinationExistsError extends Error {
+  readonly code = "EEXIST";
+  constructor(readonly relativePath: string) {
+    super(`A file already exists at ${relativePath}`);
+    this.name = "DestinationExistsError";
+  }
+}
+
 export type FileIO = {
   walk(rootPath: string, subPath?: string): Promise<FileStat[]>;
   list(rootPath: string, subPath?: string): Promise<DirEntry[]>;
@@ -71,8 +101,31 @@ export type FileIO = {
   read(rootPath: string, relativePath: string): Promise<Uint8Array>;
   exists(rootPath: string, relativePath: string): Promise<boolean>;
   mkdir(rootPath: string, relativePath: string): Promise<void>;
+  /**
+   * Copy one file. Must not overwrite: throw `DestinationExistsError` if `toRelative` exists.
+   * Must not leave a partial file at `toRelative` if it fails part-way.
+   */
   copy(args: CopyArgs): Promise<void>;
   remove(rootPath: string, relativePath: string): Promise<void>;
+  /**
+   * Optional: read details from the file's content, e.g. the capture date from a photo's EXIF.
+   * Called only for files that are new to the library. Must not throw for unreadable files.
+   */
+  describe?(rootPath: string, relativePath: string): Promise<FileDetails>;
+  /** Optional: byte size without reading the file. */
+  size?(rootPath: string, relativePath: string): Promise<number>;
+  /**
+   * Optional: stream all or part of a file (inclusive byte range) instead of loading it into
+   * memory. Lets large videos play and seek. Adapters that cannot do this fall back to `read`.
+   */
+  stream?(rootPath: string, relativePath: string, range?: ByteRange): Promise<ReadableStream<Uint8Array>>;
+};
+
+export type ByteRange = { start: number; end: number };
+
+export type FileDetails = {
+  /** When the photo or video was captured (ISO 8601), if the file records it. */
+  takenAt?: string | null;
 };
 
 export type VolumePresence = {

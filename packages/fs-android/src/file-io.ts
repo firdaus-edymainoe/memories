@@ -52,6 +52,7 @@ export class AndroidFileIO implements FileIO {
         kind: kindFromName(name),
         takenAt: new Date(Number(match[2]) * 1000).toISOString(),
         place: null,
+        modifiedAt: new Date(Number(match[2]) * 1000).toISOString(),
       });
     }
     return out;

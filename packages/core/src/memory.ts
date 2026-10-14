@@ -1,5 +1,8 @@
 import type {
   BackupJob,
+  BackupRun,
+  FileVersion,
+  PendingDeletion,
   ContentObject,
   Drive,
   FileQuery,
@@ -9,7 +12,7 @@ import type {
 } from "./domain.js";
 import { kindFromName, mimeFromName } from "./kind.js";
 import { relativeInsideRoot } from "./paths.js";
-import type { CatalogPort, CopyArgs, DirEntry, FileIO, FileStat, VolumePresence, Volumes } from "./ports.js";
+import { type CatalogPort, type CopyArgs, DestinationExistsError, type DirEntry, type FileIO, type FileStat, type VolumePresence, type Volumes } from "./ports.js";
 
 export class MemoryCatalog implements CatalogPort {
   drives = new Map<string, Drive>();
@@ -19,6 +22,9 @@ export class MemoryCatalog implements CatalogPort {
   folders = new Map<string, VirtualFolder>();
   fileFolders = new Map<string, string>();
   jobs = new Map<string, BackupJob>();
+  versions: FileVersion[] = [];
+  runs = new Map<string, BackupRun>();
+  pending: PendingDeletion[] = [];
 
   async listDrives() {
     return [...this.drives.values()];
@@ -49,6 +55,7 @@ export class MemoryCatalog implements CatalogPort {
     return [...this.files.values()].filter((file) => {
       if (query?.kind && file.kind !== query.kind) return false;
       if (query?.inbox !== undefined && file.inbox !== query.inbox) return false;
+      if (Boolean(file.trashedAt) !== Boolean(query?.trashed)) return false;
       return true;
     });
   }
@@ -63,6 +70,13 @@ export class MemoryCatalog implements CatalogPort {
 
   async upsertFile(file: LibraryFile) {
     this.files.set(file.id, { ...file });
+  }
+
+  async deleteFile(id: string) {
+    this.files.delete(id);
+    this.replicas = this.replicas.filter((replica) => replica.fileId !== id);
+    this.versions = this.versions.filter((version) => version.fileId !== id);
+    this.fileFolders.delete(id);
   }
 
   async listReplicas(fileId: string) {
@@ -81,12 +95,8 @@ export class MemoryCatalog implements CatalogPort {
     );
   }
 
+  /** One copy per path on a drive; a drive may hold several versions of one file. */
   async upsertReplica(replica: Replica) {
-    const byFile = this.replicas.findIndex((row) => row.driveId === replica.driveId && row.fileId === replica.fileId);
-    if (byFile >= 0) {
-      this.replicas[byFile] = { ...replica };
-      return;
-    }
     const index = this.replicas.findIndex(
       (row) => row.driveId === replica.driveId && row.relativePath === replica.relativePath,
     );
@@ -130,6 +140,38 @@ export class MemoryCatalog implements CatalogPort {
   async upsertBackupJob(job: BackupJob) {
     this.jobs.set(job.id, { ...job });
   }
+
+  async listVersions(fileId: string) {
+    return this.versions.filter((version) => version.fileId === fileId).sort((a, b) => b.version - a.version);
+  }
+
+  async addVersion(version: FileVersion) {
+    this.versions.push({ ...version });
+  }
+
+  async upsertBackupRun(run: BackupRun) {
+    this.runs.set(run.id, { ...run });
+  }
+
+  async listBackupRuns(limit: number) {
+    return [...this.runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit);
+  }
+
+  async addPendingDeletion(deletion: PendingDeletion) {
+    if (!this.pending.some((row) => row.driveId === deletion.driveId && row.relativePath === deletion.relativePath)) {
+      this.pending.push({ ...deletion });
+    }
+  }
+
+  async listPendingDeletions(driveId: string) {
+    return this.pending.filter((row) => row.driveId === driveId);
+  }
+
+  async removePendingDeletion(deletion: PendingDeletion) {
+    this.pending = this.pending.filter(
+      (row) => !(row.driveId === deletion.driveId && row.relativePath === deletion.relativePath),
+    );
+  }
 }
 
 type StoredBlob = {
@@ -137,7 +179,15 @@ type StoredBlob = {
   mime: string;
   takenAt: string | null;
   place: string | null;
+  modifiedAt: string;
 };
+
+let clock = Date.UTC(2020, 0, 1);
+/** Every write gets a later modification time, like a real file system. */
+function nextModifiedAt() {
+  clock += 1000;
+  return new Date(clock).toISOString();
+}
 
 function key(rootPath: string, relativePath: string) {
   return `${rootPath}::${relativeInsideRoot(relativePath)}`;
@@ -169,6 +219,7 @@ export class MemoryFileIO implements FileIO {
       mime: extra?.mime ?? mimeFromName(rel),
       takenAt: extra?.takenAt ?? null,
       place: extra?.place ?? null,
+      modifiedAt: nextModifiedAt(),
     });
     this.dirs.add(`${rootPath}::`);
   }
@@ -188,6 +239,7 @@ export class MemoryFileIO implements FileIO {
         kind: kindFromName(name),
         takenAt: blob.takenAt,
         place: blob.place,
+        modifiedAt: blob.modifiedAt,
       });
     }
     return out;
@@ -259,11 +311,15 @@ export class MemoryFileIO implements FileIO {
 
   async copy(args: CopyArgs) {
     const blob = this.require(args.fromRoot, args.fromRelative);
+    if (this.blobs.has(key(args.toRoot, args.toRelative))) {
+      throw new DestinationExistsError(relativeInsideRoot(args.toRelative));
+    }
     this.blobs.set(key(args.toRoot, args.toRelative), {
       bytes: new Uint8Array(blob.bytes),
       mime: blob.mime,
       takenAt: blob.takenAt,
       place: blob.place,
+      modifiedAt: nextModifiedAt(),
     });
     args.onProgress?.(1);
   }

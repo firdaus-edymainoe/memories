@@ -9,6 +9,27 @@ import "./app.css";
 
 const params = new URLSearchParams(window.location.search);
 const api = params.get("api") || "/api";
+const token = launchToken();
+
+/**
+ * The desktop app opens the UI with `?token=…` (a secret for this launch). Keep it for this
+ * window only and remove it from the address bar.
+ */
+function launchToken() {
+  const fromUrl = params.get("token");
+  try {
+    if (fromUrl) {
+      sessionStorage.setItem("memories-token", fromUrl);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("token");
+      window.history.replaceState(window.history.state, "", url);
+      return fromUrl;
+    }
+    return sessionStorage.getItem("memories-token");
+  } catch {
+    return fromUrl;
+  }
+}
 
 /** Sample library for local design work and the Vercel stakeholder preview. */
 function useDemoData() {
@@ -22,7 +43,7 @@ function useDemoAuth() {
 }
 
 async function boot() {
-  let client = new MemoriesClient(api);
+  let client = new MemoriesClient(api, token);
   if (useDemoData()) {
     const { demoClient } = await import("./demo.js");
     client = demoClient();

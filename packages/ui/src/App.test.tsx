@@ -1,5 +1,5 @@
 import { MemoriesClient } from "@memories/client";
-import type { LibraryFile, VolumePresence } from "@memories/core";
+import type { BackupRun, FileDetail, LibraryFile, VolumePresence } from "@memories/core";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoriesApp } from "./App.js";
@@ -7,7 +7,15 @@ import { MemoriesApp } from "./App.js";
 function fakeClient(
   volumes: VolumePresence[] = [],
   delayMs = 0,
-  extras: { drives?: boolean; files?: LibraryFile[] } = {},
+  extras: {
+    drives?: boolean;
+    files?: LibraryFile[];
+    trash?: LibraryFile[];
+    runs?: BackupRun[];
+    detail?: FileDetail;
+    jobs?: Array<{ id: string; sourceDriveId: string; destDriveId: string; sourceRelativePaths: string[]; lastRunAt: string | null; auto?: boolean }>;
+    calls?: string[];
+  } = {},
 ): MemoriesClient {
   const phone = {
     id: "drv_phone",
@@ -32,7 +40,9 @@ function fakeClient(
     destDriveId: string;
     sourceRelativePaths: string[];
     lastRunAt: string | null;
-  }> = [];
+    auto?: boolean;
+  }> = extras.jobs ?? [];
+  const calls = extras.calls ?? [];
 
   async function entriesAt(relativePath: string) {
     if (delayMs && relativePath) await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -57,12 +67,30 @@ function fakeClient(
 
   return {
     mediaUrl: (id: string) => `/media/${id}`,
+    thumbUrl: (id: string) => `/thumbs/${id}`,
     driveMediaUrl: (id: string, path: string) => `/drives/${id}/media?path=${encodeURIComponent(path)}`,
+    driveThumbUrl: (id: string, path: string) => `/drives/${id}/thumb?path=${encodeURIComponent(path)}`,
     drives: async () => catalog.map((drive) => ({ ...drive })),
     files: async () => extras.files ?? [],
-    file: async () => null,
+    file: async (id: string) => (extras.detail?.file.id === id ? extras.detail : null),
+    moveToTrash: async (ids: string[]) => (calls.push(`trash:${ids.join(",")}`), ids.length),
+    restoreFromTrash: async (ids: string[]) => (calls.push(`restore:${ids.join(",")}`), ids.length),
+    deleteForever: async (ids: string[]) => (calls.push(`delete:${ids.join(",")}`), { deleted: ids.length, removed: 1, waiting: ["Summer SSD"] }),
+    emptyTrash: async () => (calls.push("empty"), { deleted: 2, removed: 2, waiting: [] }),
+    pickFolder: async () => "/Users/me/Desktop",
+    exportFiles: async (input: { fileIds: string[]; objectHash?: string }) => (
+      calls.push(`export:${input.fileIds.join(",")}:${input.objectHash ?? "current"}`), { exported: 1, failed: [] }
+    ),
+    versionMediaUrl: (id: string, hash: string) => `/files/${id}/versions/${hash}/media`,
     events: async () => [],
     backups: async () => jobs,
+    backupRuns: async () => extras.runs ?? [],
+    trash: async () => extras.trash ?? [],
+    setBackupAuto: async (id: string, auto: boolean) => {
+      calls.push(`auto:${id}:${auto}`);
+      jobs = jobs.map((job) => (job.id === id ? { ...job, auto } : job));
+      return jobs.find((job) => job.id === id);
+    },
     saveBackup: async (input: { sourceDriveId: string; destDriveId: string; sourceRelativePaths: string[] }) => {
       const job = { id: "job_1", lastRunAt: null, ...input };
       jobs = [job];
@@ -413,5 +441,97 @@ describe("MemoriesApp", () => {
     expect(await screen.findByRole("heading", { name: "Pixel 6 to Summer SSD" })).toBeTruthy();
     expect(screen.getByText("DCIM › Camera")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Back up now" })).toBeTruthy();
+  });
+
+  describe("trash, versions, export and backup history", () => {
+    const photo: LibraryFile = {
+      id: "p1",
+      objectHash: "h2",
+      name: "Plan.pdf",
+      kind: "document",
+      takenAt: "2025-08-12T10:00:00",
+      place: null,
+      inbox: false,
+    };
+
+    it("restores from the Trash and asks before deleting for good", async () => {
+      const calls: string[] = [];
+      const trashed = [
+        { ...photo, trashedAt: new Date().toISOString() },
+        { ...photo, id: "p2", name: "Old receipt.pdf", trashedAt: new Date().toISOString() },
+      ];
+      render(<MemoriesApp client={fakeClient([], 0, { trash: trashed, calls })} />);
+      fireEvent.click(screen.getByRole("button", { name: "Trash" }));
+      expect(await screen.findByRole("heading", { name: "Trash" })).toBeTruthy();
+      expect(screen.getByText("Plan.pdf")).toBeTruthy();
+
+      fireEvent.click(screen.getAllByRole("button", { name: /Restore/ })[0]!);
+      await waitFor(() => expect(calls).toContain("restore:p1"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Delete Old receipt.pdf for good" }));
+      const dialog = await screen.findByRole("dialog", { name: "Delete “Old receipt.pdf” for good?" });
+      expect(within(dialog).getByText(/including spare copies on other drives/)).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole("button", { name: /Delete for good/ }));
+      await waitFor(() => expect(calls).toContain("delete:p2"));
+      expect(await screen.findByText(/Summer SSD will be cleared when you plug it in/)).toBeTruthy();
+    });
+
+    it("shows an empty Trash calmly", async () => {
+      render(<MemoriesApp client={fakeClient()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Trash" }));
+      expect(await screen.findByRole("heading", { name: "Trash is empty" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /Empty Trash/ })).toBeNull();
+    });
+
+    it("lists versions in the details, opens an old one and saves copies", async () => {
+      const calls: string[] = [];
+      const drive = { id: "drv_ssd", name: "Summer SSD", kind: "disk" as const, rootPath: "/Volumes/SSD", volumeId: "ssd", online: true };
+      const copy = { replica: { fileId: "p1", driveId: "drv_ssd", relativePath: "Plan.pdf", status: "ready" as const, progress: null }, drive };
+      const detail: FileDetail = {
+        file: photo,
+        object: { hash: "h2", size: 2048, mime: "application/pdf" },
+        replicas: [copy],
+        versions: [
+          { fileId: "p1", version: 2, objectHash: "h2", size: 2048, createdAt: "2025-09-01T10:00:00", current: true, copies: [copy] },
+          { fileId: "p1", version: 1, objectHash: "h1", size: 1024, createdAt: "2025-08-12T10:00:00", current: false, copies: [copy] },
+        ],
+      };
+      render(<MemoriesApp client={fakeClient([], 0, { drives: true, files: [photo], detail, calls })} />);
+      fireEvent.click(await screen.findByRole("button", { name: /Plan\.pdf/ }));
+      const details = await screen.findByRole("complementary", { name: "Details" });
+      expect(await within(details).findByText("Version 1")).toBeTruthy();
+      expect(within(details).getByText("On Summer SSD")).toBeTruthy();
+
+      fireEvent.click(within(details).getByRole("button", { name: "Save a copy…" }));
+      await waitFor(() => expect(calls).toContain("export:p1:current"));
+      fireEvent.click(within(details).getByRole("button", { name: "Save a copy of version 1" }));
+      await waitFor(() => expect(calls).toContain("export:p1:h1"));
+
+      fireEvent.click(within(details).getByRole("button", { name: "Open version 1" }));
+      const viewer = await screen.findByRole("dialog", { name: "Plan.pdf · Version 1" });
+      expect(viewer.querySelector('iframe[src="/files/p1/versions/h1/media"]')).toBeTruthy();
+      fireEvent.click(within(viewer).getByRole("button", { name: "Back" }));
+
+      fireEvent.click(within(details).getByRole("button", { name: /Move to Trash/ }));
+      await waitFor(() => expect(calls).toContain("trash:p1"));
+    });
+
+    it("shows backup history and turns automatic backups on", async () => {
+      const calls: string[] = [];
+      const jobs = [{ id: "job_1", sourceDriveId: "drv_phone", destDriveId: "drv_ssd", sourceRelativePaths: [""], lastRunAt: null, auto: false }];
+      const runs: BackupRun[] = [
+        { id: "r1", jobId: "job_1", trigger: "auto", status: "done", startedAt: new Date().toISOString(), finishedAt: null, copied: 3, skipped: 9, failed: 1, error: "x.jpg: busy" },
+      ];
+      render(<MemoriesApp client={fakeClient([], 0, { drives: true, jobs, runs, calls })} />);
+      fireEvent.click(screen.getByRole("button", { name: "Backup" }));
+      expect(await screen.findByRole("heading", { name: "Recent backups" })).toBeTruthy();
+      expect(screen.getByText("3 new files copied, 1 file couldn’t be copied.")).toBeTruthy();
+      expect(screen.getByText("Automatic")).toBeTruthy();
+
+      const toggle = screen.getByRole("switch", { name: "Back up automatically" });
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      fireEvent.click(toggle);
+      await waitFor(() => expect(calls).toContain("auto:job_1:true"));
+    });
   });
 });

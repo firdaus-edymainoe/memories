@@ -1,4 +1,4 @@
-import type { FileIO, Ports, Volumes } from "@memories/core";
+import { BackupScheduler, type FileIO, type Ports, type Volumes } from "@memories/core";
 import { SqliteCatalog } from "@memories/db-sqlite";
 import {
   AndroidFileIO,
@@ -12,7 +12,7 @@ import {
   createOsMtpHost,
   ensureAdb,
 } from "@memories/fs-android";
-import { createApp } from "@memories/server";
+import { type AppOptions, createApp } from "@memories/server";
 import { mkdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -53,7 +53,24 @@ export function defaultCatalogPath() {
   return join(dir, "catalog.sqlite");
 }
 
-export async function createLocalApp(catalogPath = defaultCatalogPath()) {
+export async function createLocalApp(catalogPath = defaultCatalogPath(), options: AppOptions = {}) {
   const ports = await createLocalPorts(catalogPath);
-  return createApp(ports);
+  return createApp(ports, options);
+}
+
+/** The API plus the background work that runs next to it (automatic backups). */
+export async function createLocalHost(catalogPath = defaultCatalogPath(), options: AppOptions = {}) {
+  const ports = await createLocalPorts(catalogPath);
+  return { app: createApp(ports, options), ports, stopAutoBackups: startAutoBackups(ports) };
+}
+
+/**
+ * Checks every few seconds whether places came online and runs the backups marked automatic.
+ * Returns a function that stops it.
+ */
+export function startAutoBackups(ports: Ports, everyMs = 10_000) {
+  const scheduler = new BackupScheduler(ports);
+  const timer = setInterval(() => void scheduler.tick().catch(() => undefined), everyMs);
+  void scheduler.tick().catch(() => undefined);
+  return () => clearInterval(timer);
 }

@@ -10,3 +10,4 @@ export { createOsMtpHost, FallbackMtpHost } from "./mtp-host.js";
 export { adbRoot, isAdbPath, parseAdbRoot } from "./uri.js";
 export { isMtpPath, isPhonePath, mtpRoot, parseMtpRoot } from "./mtp-uri.js";
 export { resolveAdbBin, ensureAdb } from "./adb-bin.js";
+export { configureVendorDirectory, vendorDirectory } from "./vendor-dir.js";
