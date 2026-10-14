@@ -1,5 +1,5 @@
 import type { VolumePresence, Volumes } from "@memories/core";
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -17,14 +17,25 @@ async function volumeSerial(letter: string): Promise<string> {
 }
 
 export class Win32Volumes implements Volumes {
+  /**
+   * Spawning `vol` for every drive letter on every poll is slow, so each letter's serial is
+   * cached until the device behind it changes (another drive took that letter).
+   */
+  private readonly ids = new Map<string, { dev: number; volumeId: string }>();
+
   async list(): Promise<VolumePresence[]> {
     const found: VolumePresence[] = [];
     for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
       const mountPath = `${letter}:\\`;
       try {
-        await access(mountPath);
+        const { dev } = await stat(mountPath);
+        let cached = this.ids.get(letter);
+        if (cached?.dev !== dev) {
+          cached = { dev, volumeId: await volumeSerial(letter) };
+          this.ids.set(letter, cached);
+        }
         found.push({
-          volumeId: await volumeSerial(letter),
+          volumeId: cached.volumeId,
           mountPath,
           label: `${letter}:`,
         });

@@ -2,10 +2,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { arch, platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadKoffi, type Koffi } from "./mtp-koffi.js";
 import { releaseOtherMtpClients } from "./mtp-darwin.js";
 import { FMT_ASSOCIATION, type MtpClient, type MtpDeviceInfo, type MtpHost, type MtpObject, unsupportedMtpWrites } from "./mtp.js";
+import { vendorDirectory } from "./vendor-dir.js";
 
 export const DEVICE_FLAGS_ANDROID_BUGS = 0x18008106;
 const LIBMTP_FILES_AND_FOLDERS_ROOT = 0xffffffff;
@@ -36,7 +36,7 @@ export type LibmtpBackend = {
 export function libmtpDylibPath(os = platform(), cpu = arch()): string | null {
   if (os !== "darwin") return null;
   const slug = cpu === "arm64" ? "arm64" : "x64";
-  const path = join(fileURLToPath(new URL(".", import.meta.url)), "..", "vendor", `darwin-${slug}`, "libmtp.dylib");
+  const path = join(vendorDirectory(), `darwin-${slug}`, "libmtp.dylib");
   return existsSync(path) ? path : null;
 }
 

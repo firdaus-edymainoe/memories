@@ -1,5 +1,5 @@
-import { relativeInsideRoot } from "@memories/core";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { DestinationExistsError, relativeInsideRoot } from "@memories/core";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -122,6 +122,43 @@ describe("SwitchFileIO", () => {
       toRelative: "Camera/a.jpg",
     });
     expect(await readFile(join(dest, "Camera", "a.jpg"), "utf8")).toBe("photo-bytes");
+  });
+
+  it("never overwrites a local file and cleans up when a pull fails", async () => {
+    const dest = await mkdtemp(join(tmpdir(), "mem-adb-"));
+    await mkdir(join(dest, "Camera"), { recursive: true });
+    await writeFile(join(dest, "Camera", "a.jpg"), "already here");
+    const local = {
+      walk: async () => [],
+      list: async () => [],
+      hash: async () => "",
+      read: async () => new Uint8Array(),
+      exists: async () => false,
+      mkdir: async () => undefined,
+      copy: async () => undefined,
+      remove: async () => undefined,
+    };
+    const io = new SwitchFileIO(
+      local,
+      new AndroidFileIO(async (_bin, args) => {
+        if (args.includes("pull")) {
+          await writeFile(args.at(-1)!, "half a pho");
+          throw new Error("device unplugged");
+        }
+        throw new Error(`unexpected adb ${args.join(" ")}`);
+      }),
+    );
+    const from = adbRoot("ABC123", "/sdcard/DCIM");
+
+    await expect(
+      io.copy({ fromRoot: from, fromRelative: "Camera/a.jpg", toRoot: dest, toRelative: "Camera/a.jpg" }),
+    ).rejects.toBeInstanceOf(DestinationExistsError);
+    expect(await readFile(join(dest, "Camera", "a.jpg"), "utf8")).toBe("already here");
+
+    await expect(
+      io.copy({ fromRoot: from, fromRelative: "Camera/b.jpg", toRoot: dest, toRelative: "Camera/b.jpg" }),
+    ).rejects.toThrow("device unplugged");
+    expect(await readdir(join(dest, "Camera"))).toEqual(["a.jpg"]);
   });
 });
 

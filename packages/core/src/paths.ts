@@ -23,3 +23,15 @@ export function parentRelative(relativePath: string): string {
   if (i < 0) return "";
   return rel.slice(0, i);
 }
+
+/** `photo.jpg` + 2 → `photo (2).jpg`, keeping any folder part. */
+export function withCollisionSuffix(relativePath: string, attempt: number): string {
+  const rel = relativeInsideRoot(relativePath);
+  if (attempt <= 1) return rel;
+  const slash = rel.lastIndexOf("/");
+  const folder = slash >= 0 ? rel.slice(0, slash + 1) : "";
+  const name = rel.slice(slash + 1);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return `${folder}${name} (${attempt})`;
+  return `${folder}${name.slice(0, dot)} (${attempt})${name.slice(dot)}`;
+}

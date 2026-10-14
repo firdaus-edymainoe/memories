@@ -1,5 +1,15 @@
 import type { MemoriesClient } from "@memories/client";
-import type { BackupJob, DirEntry, Drive, DriveKind, EventCluster, FileDetail, LibraryFile, VolumePresence } from "@memories/core";
+import type {
+  BackupJob,
+  BackupRun,
+  DirEntry,
+  Drive,
+  DriveKind,
+  EventCluster,
+  FileDetail,
+  LibraryFile,
+  VolumePresence,
+} from "@memories/core";
 import { AnimatePresence, LayoutGroup, motion, MotionConfig } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BackupHome, BackupWizard, toggleFolder, type BackupResult } from "./Backup.js";
@@ -18,6 +28,7 @@ import {
   PRIMARY_SHELVES,
   SHELF,
   shortDate,
+  whenLabel,
   type Family,
   type Shelf,
 } from "./files.js";
@@ -26,10 +37,11 @@ import { Library, type Lens, type Scope } from "./Library.js";
 import { AddPlaceDialog, PlaceBrowser, PlacesHome, type BrowseLens } from "./Places.js";
 import { CopyToMenu, Facts, FilePreview, Inspector, kindLine, Viewer } from "./Preview.js";
 import { Settings } from "./Settings.js";
+import { DeleteDialog, TrashHome } from "./Trash.js";
 import { applyTheme, chromePlatform, readThemePref, resolvedTheme, saveThemePref, type ThemePref } from "./theme.js";
 import { Welcome } from "./Welcome.js";
 
-type Screen = "library" | "places" | "backup" | "settings";
+type Screen = "library" | "places" | "backup" | "trash" | "settings";
 type View = "tiles" | "list";
 
 const spring = { type: "spring", duration: 0.4, bounce: 0.15 } as const;
@@ -173,6 +185,11 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   const [files, setFiles] = useState<LibraryFile[]>([]);
   const [events, setEvents] = useState<EventCluster[]>([]);
   const [jobs, setJobs] = useState<BackupJob[]>([]);
+  const [runs, setRuns] = useState<BackupRun[]>([]);
+  const [trash, setTrash] = useState<LibraryFile[]>([]);
+  const [trashBusy, setTrashBusy] = useState(false);
+  const [deleting, setDeleting] = useState<LibraryFile[] | null>(null);
+  const [versionView, setVersionView] = useState<{ fileId: string; hash: string; label: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -228,18 +245,22 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextDrives, nextVolumes, nextFiles, nextEvents, nextJobs] = await Promise.all([
+      const [nextDrives, nextVolumes, nextFiles, nextEvents, nextJobs, nextRuns, nextTrash] = await Promise.all([
         client.drives(),
         client.volumes(),
         client.files({}),
         client.events(),
         client.backups(),
+        client.backupRuns(12),
+        client.trash(),
       ]);
       setDrives(nextDrives);
       setVolumes(nextVolumes);
       setFiles(nextFiles);
       setEvents(nextEvents);
       setJobs(nextJobs);
+      setRuns(nextRuns);
+      setTrash(nextTrash);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Memories isn’t responding");
@@ -253,7 +274,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   }, [refresh]);
 
   useEffect(() => {
-    if ((screen !== "places" && screen !== "backup") || browseDrive || pickerVolume) return;
+    if ((screen !== "places" && screen !== "backup" && screen !== "trash") || browseDrive || pickerVolume) return;
     const timer = window.setInterval(() => void refresh(), 4000);
     return () => window.clearInterval(timer);
   }, [screen, refresh, browseDrive, pickerVolume]);
@@ -511,6 +532,80 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
     }
   }
 
+  async function onAutoBackup(id: string, auto: boolean) {
+    try {
+      await client.setBackupAuto(id, auto);
+      show(auto ? "This backup will now run on its own" : "Automatic backup turned off");
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : "Couldn’t change this backup");
+    }
+  }
+
+  async function onMoveToTrash(file: LibraryFile) {
+    try {
+      await client.moveToTrash([file.id]);
+      setSelected(null);
+      setViewer(null);
+      show(`Moved ${file.name} to the Trash`);
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : "Couldn’t move it to the Trash");
+    }
+  }
+
+  async function onRestore(file: LibraryFile) {
+    setTrashBusy(true);
+    try {
+      await client.restoreFromTrash([file.id]);
+      show(`${file.name} is back`);
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : "Couldn’t restore it");
+    } finally {
+      setTrashBusy(false);
+    }
+  }
+
+  async function onDeleteForever(targets: LibraryFile[]) {
+    setDeleting(null);
+    setTrashBusy(true);
+    try {
+      const everything = targets.length === trash.length;
+      const result = everything ? await client.emptyTrash() : await client.deleteForever(targets.map((file) => file.id));
+      show(
+        result.waiting.length
+          ? `Deleted. ${result.waiting.join(" and ")} will be cleared when you plug ${result.waiting.length === 1 ? "it" : "them"} in.`
+          : `Deleted ${plural(result.deleted, "file")} for good`,
+      );
+      await refresh();
+    } catch (err) {
+      show(err instanceof Error ? err.message : "Couldn’t delete these files");
+    } finally {
+      setTrashBusy(false);
+    }
+  }
+
+  /** Saves copies into a folder the person picks, e.g. to send them or restore an older version. */
+  async function onExport(fileIds: string[], objectHash?: string) {
+    let rootPath: string | null;
+    try {
+      rootPath = await client.pickFolder();
+    } catch {
+      show("Saving a copy needs the Memories app");
+      return;
+    }
+    if (!rootPath) return;
+    try {
+      show("Saving a copy…");
+      const result = await client.exportFiles({ fileIds, rootPath, ...(objectHash ? { objectHash } : {}) });
+      if (result.failed.length) show(`${result.failed[0]!.name}: ${result.failed[0]!.reason}`);
+      else show(`Saved ${plural(result.exported, "copy", "copies")} to ${pathLeaf(rootPath)}`);
+    } catch (err) {
+      show(err instanceof Error ? err.message : "Couldn’t save a copy");
+    }
+  }
+
   async function onRunBackup(id: string) {
     setBkRunning(id);
     setBkResult(null);
@@ -733,6 +828,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
 
         <div className="nav-group">
           <NavItem active={screen === "backup"} icon="backup" label="Backup" onClick={() => go("backup")} />
+          <NavItem active={screen === "trash"} icon="trash" label="Trash" onClick={() => go("trash")} />
           <NavItem active={screen === "settings"} icon="settings" label="Settings" onClick={() => go("settings")} />
         </div>
       </nav>
@@ -791,7 +887,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         search={search}
         view={view}
         selected={selected}
-        mediaUrl={(id) => client.mediaUrl(id)}
+        mediaUrl={(id) => client.thumbUrl(id)}
         onDrill={(next) => {
           setScope(next);
           setSelected(null);
@@ -816,7 +912,7 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         lens={browseLens}
         selected={browseFile?.relativePath ?? null}
         picking={!!pickerVolume}
-        thumbUrl={browseDrive && browseDrive.kind !== "phone" ? (entry) => client.driveMediaUrl(browseDrive.id, entry.relativePath) : null}
+        thumbUrl={browseDrive && browseDrive.kind !== "phone" ? (entry) => client.driveThumbUrl(browseDrive.id, entry.relativePath) : null}
         onEnter={(entry) => (pickerVolume ? void loadPicker(pickerVolume, entry.relativePath) : browseDrive && void loadBrowse(browseDrive, entry.relativePath))}
         onSelect={(entry) => {
           if (!browseDrive) return;
@@ -863,7 +959,27 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         onSave={() => void onSaveBackup()}
       />
     ) : (
-      <BackupHome jobs={jobs} drives={drives} running={bkRunning} result={bkResult} onNew={() => startBackup()} onRun={(id) => void onRunBackup(id)} />
+      <BackupHome
+        jobs={jobs}
+        drives={drives}
+        runs={runs}
+        running={bkRunning}
+        result={bkResult}
+        onNew={() => startBackup()}
+        onRun={(id) => void onRunBackup(id)}
+        onAuto={(id, auto) => void onAutoBackup(id, auto)}
+      />
+    );
+  } else if (screen === "trash") {
+    main = (
+      <TrashHome
+        files={trash}
+        busy={trashBusy}
+        thumbUrl={(id) => client.thumbUrl(id)}
+        onRestore={(file) => void onRestore(file)}
+        onDelete={(file) => setDeleting([file])}
+        onEmpty={() => setDeleting(trash)}
+      />
     );
   } else {
     main = (
@@ -945,7 +1061,17 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                   })}
                 </>
               ) : (
-                <span className="cur">{screen === "places" ? "Places" : screen === "backup" ? (bkSetup ? "New backup" : "Backup") : "Settings"}</span>
+                <span className="cur">
+                  {screen === "places"
+                    ? "Places"
+                    : screen === "backup"
+                      ? bkSetup
+                        ? "New backup"
+                        : "Backup"
+                      : screen === "trash"
+                        ? "Trash"
+                        : "Settings"}
+                </span>
               )}
             </nav>
 
@@ -1053,6 +1179,55 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                     </li>
                   ))}
                 </ul>
+                {libFile.versions.length > 1 ? (
+                  <>
+                    <h4>Versions</h4>
+                    <ul className="versions">
+                      {libFile.versions.map((version) => {
+                        const ready = version.copies.find((row) => row.drive.online);
+                        const label = `Version ${version.version}`;
+                        return (
+                          <li key={version.version}>
+                            <div className="version-head">
+                              <Icon name="history" size={16} />
+                              <strong>{label}</strong>
+                              {version.current ? (
+                                <span className="chip ok">Now</span>
+                              ) : ready ? (
+                                <span className="chip off">On {ready.drive.name}</span>
+                              ) : (
+                                <span className="chip off">{version.copies.length ? "Unplugged" : "No copy kept"}</span>
+                              )}
+                            </div>
+                            <span className="version-meta">
+                              {whenLabel(version.createdAt)} · {formatSize(version.size)}
+                            </span>
+                            {!version.current && ready ? (
+                              <span className="version-actions">
+                                <button
+                                  type="button"
+                                  className="link"
+                                  aria-label={`Open version ${version.version}`}
+                                  onClick={() => setVersionView({ fileId: libFile.file.id, hash: version.objectHash, label })}
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  type="button"
+                                  className="link"
+                                  aria-label={`Save a copy of version ${version.version}`}
+                                  onClick={() => void onExport([libFile.file.id], version.objectHash)}
+                                >
+                                  Save a copy…
+                                </button>
+                              </span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                ) : null}
                 <div className="insp-actions">
                   <button type="button" className="btn btn-primary" onClick={() => setViewer(libFile.file.id)}>
                     <Icon name="open" size={16} /> Open
@@ -1061,11 +1236,17 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
                     places={places.filter((drive) => !libFile.replicas.some((row) => row.drive.id === drive.id))}
                     onPick={(drive) => void onCopy(drive)}
                   />
+                  <button type="button" className="btn btn-soft" onClick={() => void onExport([libFile.file.id])}>
+                    <Icon name="export" size={16} /> Save a copy…
+                  </button>
                   {libFile.file.inbox ? (
                     <button type="button" className="btn btn-soft" onClick={() => void onSorted()}>
                       <Icon name="check" size={16} /> Mark as sorted
                     </button>
                   ) : null}
+                  <button type="button" className="btn btn-quiet danger" onClick={() => void onMoveToTrash(libFile.file)}>
+                    <Icon name="trash" size={16} /> Move to Trash
+                  </button>
                 </div>
               </>
             ) : browseDrive && browseFile ? (
@@ -1134,6 +1315,15 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
             <Viewer name={browseFile.name} onClose={() => setBrowseViewer(false)}>
               <FilePreview name={browseFile.name} kind={browseFile.kind} src={client.driveMediaUrl(browseDrive.id, browseFile.relativePath)} fit="viewer" />
             </Viewer>
+          ) : versionView && detail?.file.id === versionView.fileId ? (
+            <Viewer name={`${detail.file.name} · ${versionView.label}`} onClose={() => setVersionView(null)}>
+              <FilePreview
+                name={detail.file.name}
+                kind={detail.file.kind}
+                src={client.versionMediaUrl(versionView.fileId, versionView.hash)}
+                fit="viewer"
+              />
+            </Viewer>
           ) : viewer && detail?.file.id === viewer ? (
             <Viewer name={detail.file.name} onClose={() => setViewer(null)}>
               <FilePreview name={detail.file.name} kind={detail.file.kind} src={client.mediaUrl(detail.file.id)} fit="viewer" />
@@ -1150,6 +1340,12 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
               onPickFolder={pickFolder}
               onAdd={(input) => void onAddPlace(input)}
             />
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {deleting?.length ? (
+            <DeleteDialog files={deleting} onClose={() => setDeleting(null)} onConfirm={() => void onDeleteForever(deleting)} />
           ) : null}
         </AnimatePresence>
 

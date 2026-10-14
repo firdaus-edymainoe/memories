@@ -1,6 +1,6 @@
-import type { BackupJob, DirEntry, Drive } from "@memories/core";
+import type { BackupJob, BackupRun, DirEntry, Drive } from "@memories/core";
 import { AnimatePresence, motion } from "motion/react";
-import { friendlySince, pathLeaf, placeStatus, plural } from "./files.js";
+import { friendlySince, pathLeaf, placeStatus, plural, whenLabel } from "./files.js";
 import { Icon } from "./icons.js";
 import { FolderWait } from "./Preview.js";
 
@@ -26,23 +26,46 @@ export function folderLabel(path: string, driveName: string) {
   return path ? path.split("/").filter(Boolean).join(" › ") : `All of ${driveName}`;
 }
 
-export type BackupResult = { id: string; copied: number; skipped: number };
+export type BackupResult = { id: string; copied: number; skipped: number; failed: number };
+
+function doneLine(result: { copied: number; failed: number }) {
+  const copied = result.copied ? `${plural(result.copied, "new file")} copied.` : "Everything was already safe.";
+  if (!result.failed) return `All done. ${copied}`;
+  return `${result.copied ? `${plural(result.copied, "new file")} copied, ` : ""}${plural(result.failed, "file")} couldn’t be copied.`;
+}
+
+function Switch({ on, label, onChange }: { on: boolean; label: string; onChange: (on: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={() => onChange(!on)} />
+  );
+}
 
 export function BackupHome({
   jobs,
   drives,
+  runs,
   running,
   result,
   onNew,
   onRun,
+  onAuto,
 }: {
   jobs: BackupJob[];
   drives: Drive[];
+  runs: BackupRun[];
   running: string | null;
   result: BackupResult | null;
   onNew: () => void;
   onRun: (id: string) => void;
+  onAuto: (id: string, auto: boolean) => void;
 }) {
+  const runningIds = new Set(runs.filter((run) => run.status === "running").map((run) => run.jobId));
+  const jobName = (jobId: string) => {
+    const job = jobs.find((row) => row.id === jobId);
+    const source = drives.find((d) => d.id === job?.sourceDriveId);
+    const dest = drives.find((d) => d.id === job?.destDriveId);
+    return job ? `${source?.name ?? "A place"} to ${dest?.name ?? "a drive"}` : "A removed backup";
+  };
   return (
     <div className="pad backup">
       <div className="page-head">
@@ -67,7 +90,7 @@ export function BackupHome({
               !job.sourceRelativePaths.length || job.sourceRelativePaths.every((path) => !path)
                 ? `All of ${source?.name ?? "this place"}`
                 : job.sourceRelativePaths.map((path) => folderLabel(path, source?.name ?? "")).join(", ");
-            const isRunning = running === job.id;
+            const isRunning = running === job.id || runningIds.has(job.id);
             const done = result?.id === job.id ? result : null;
             return (
               <motion.article
@@ -109,7 +132,7 @@ export function BackupHome({
                           <svg className="tick" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 12.5l4.5 4.5L19 7.5" />
                           </svg>
-                          {done.copied ? `All done. ${plural(done.copied, "new file")} copied.` : "All done. Everything was already safe."}
+                          {doneLine(done)}
                         </>
                       ) : ready ? (
                         friendlySince(job.lastRunAt)
@@ -118,6 +141,13 @@ export function BackupHome({
                       )}
                     </motion.p>
                   </AnimatePresence>
+                  <label className="auto-toggle">
+                    <Switch on={!!job.auto} label="Back up automatically" onChange={(on) => onAuto(job.id, on)} />
+                    <span>
+                      Back up automatically
+                      <em>Whenever both are plugged in</em>
+                    </span>
+                  </label>
                 </div>
                 <button type="button" className="btn btn-primary" disabled={!ready || isRunning} onClick={() => onRun(job.id)}>
                   {isRunning ? "Backing up…" : "Back up now"}
@@ -139,8 +169,47 @@ export function BackupHome({
           </button>
         </div>
       )}
+      {runs.length ? (
+        <section className="history" aria-label="Recent backups">
+          <h2>Recent backups</h2>
+          <ul className="history-list">
+            {runs.map((run) => {
+              const tone =
+                run.status === "running" ? "running" : run.status === "failed" ? "failed" : run.failed ? "warn" : "ok";
+              const outcome =
+                run.status === "running"
+                  ? "Copying now…"
+                  : run.status === "failed"
+                    ? `Didn’t finish: ${friendlyError(run.error)}`
+                    : doneLine(run);
+              return (
+                <li key={run.id} className={`history-row ${tone}`}>
+                  <span className="history-mark" aria-hidden="true">
+                    <Icon name={tone === "ok" ? "check" : tone === "running" ? "backup" : "history"} size={16} />
+                  </span>
+                  <span className="history-text">
+                    <strong>{jobName(run.jobId)}</strong>
+                    <span>{outcome}</span>
+                  </span>
+                  <span className="history-when">
+                    {whenLabel(run.startedAt)}
+                    {run.trigger === "auto" ? <span className="chip off">Automatic</span> : null}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
+}
+
+function friendlyError(error: string | null) {
+  if (!error) return "something got in the way.";
+  if (error.includes("Source drive is offline")) return "the first place wasn’t plugged in.";
+  if (error.includes("Destination drive is offline")) return "the backup drive wasn’t plugged in.";
+  return error;
 }
 
 const STEPS = ["What to back up", "Which folders", "Where to keep it"];

@@ -3,13 +3,13 @@ import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { homedir, platform as osPlatform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { vendorDirectory } from "./vendor-dir.js";
 
 const execFileAsync = promisify(execFile);
 
 export function vendorAdbPath() {
-  const pkg = join(fileURLToPath(new URL(".", import.meta.url)), "..", "vendor");
+  const pkg = vendorDirectory();
   if (osPlatform() === "win32") return join(pkg, "win32", "adb.exe");
   if (osPlatform() === "darwin") return join(pkg, "darwin", "adb");
   return join(pkg, "linux", "adb");

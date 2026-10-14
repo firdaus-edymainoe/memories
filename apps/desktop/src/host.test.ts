@@ -144,7 +144,7 @@ describe("desktop host", () => {
     await app.request("/sync", { method: "POST" });
     const missing = await app.request(`/backups/${saved.job.id}/run`, { method: "POST" });
     expect(missing.status).toBe(200);
-    expect(await missing.json()).toEqual({ copied: 0, skipped: 0 });
+    expect(await missing.json()).toEqual({ copied: 0, skipped: 0, failed: 0 });
     expect(await exists(join(stick, "Photos", "new-shot.jpg"))).toBe(false);
 
     await rename(parked, camera);

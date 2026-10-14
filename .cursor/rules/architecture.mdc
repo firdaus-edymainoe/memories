@@ -32,3 +32,20 @@ Core is application logic. Disks, OS APIs, and SQLite are adapters. The UI is a 
 Registering a drive means the user picks a directory. That path is the drive root. Ingest, copy, backup, and thumbs we write toward that drive stay inside it. FileIO must refuse paths outside the root.
 
 The physical volume (Mac volume UUID, Windows serial) is only for presence: connected vs offline after unplug. We do not claim the rest of the disk unless they chose the volume root as that folder.
+
+## Copies are safe
+
+`FileIO.copy` never overwrites (throw `DestinationExistsError`) and never leaves a half-written file: reserve the name, write a temp file beside it, rename. Plain file operations only, so exFAT/FAT32 drives work. Core picks a free name (`photo (2).jpg`), reuses a destination file with the same hash, and hashes every copy against the original before recording it.
+
+## Optional FileIO capabilities
+
+`describe` (EXIF/video capture date), `size` + `stream` (byte ranges for video seeking) are optional. Core falls back when an adapter (phones) does not have them. `FileStat.modifiedAt` lets unchanged files skip re-hashing on the next scan.
+
+## Desktop host
+
+`apps/desktop/src/main.ts` runs the API inside Electron on `127.0.0.1` with a random port and a per-launch token (header or `token` query), rejects other hosts and foreign origins, and serves the built UI from the same origin. It provides the native folder picker and OS thumbnails to the server. `npm run electron -w @memories/desktop` builds and launches; `MEMORIES_UI=http://127.0.0.1:5173` uses the Vite dev server.
+
+## Catalog
+
+SQLite via Drizzle on Node's built-in `node:sqlite` (no native module, so no Electron rebuild). Schema changes are append-only migrations tracked with `PRAGMA user_version` in `packages/db-sqlite`.
+

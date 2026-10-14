@@ -186,3 +186,151 @@ describe("backup folders", () => {
     );
   });
 });
+
+describe("safe copies", () => {
+  async function twoPhonesOneDisk() {
+    const catalog = new MemoryCatalog();
+    const fileIO = new MemoryFileIO();
+    const volumes = new MemoryVolumes();
+    volumes.connect({ volumeId: "pixel", mountPath: "/pixel", label: "Pixel" });
+    volumes.connect({ volumeId: "galaxy", mountPath: "/galaxy", label: "Galaxy" });
+    volumes.connect({ volumeId: "ssd", mountPath: "/ssd", label: "SSD" });
+    const ports: Ports = { catalog, fileIO, volumes };
+    const pixel = await registerDrive(ports, { name: "Pixel", kind: "phone", rootPath: "/pixel", volumeId: "pixel" });
+    const galaxy = await registerDrive(ports, { name: "Galaxy", kind: "phone", rootPath: "/galaxy", volumeId: "galaxy" });
+    const ssd = await registerDrive(ports, { name: "SSD", kind: "disk", rootPath: "/ssd", volumeId: "ssd" });
+    return { catalog, fileIO, volumes, ports, pixel, galaxy, ssd };
+  }
+
+  async function backUp(ports: Ports, sourceDriveId: string, destDriveId: string) {
+    const job = await saveBackupJob(ports, { sourceDriveId, destDriveId, sourceRelativePaths: [""] });
+    return runBackupJob(ports, job.id);
+  }
+
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+  it("never overwrites a different file with the same name", async () => {
+    const { fileIO, ports, pixel, galaxy, ssd } = await twoPhonesOneDisk();
+    fileIO.seed("/pixel", "DCIM/IMG_0001.jpg", "pixel photo");
+    fileIO.seed("/galaxy", "DCIM/IMG_0001.jpg", "galaxy photo");
+
+    await backUp(ports, pixel.id, ssd.id);
+    const second = await backUp(ports, galaxy.id, ssd.id);
+
+    expect(second.copied).toBe(1);
+    expect(text(await fileIO.read("/ssd", "DCIM/IMG_0001.jpg"))).toBe("pixel photo");
+    expect(text(await fileIO.read("/ssd", "DCIM/IMG_0001 (2).jpg"))).toBe("galaxy photo");
+  });
+
+  it("reuses a file already on the destination when the content matches", async () => {
+    const { catalog, fileIO, ports, pixel, ssd } = await twoPhonesOneDisk();
+    fileIO.seed("/pixel", "DCIM/IMG_0002.jpg", "same bytes");
+    fileIO.seed("/ssd", "DCIM/IMG_0002.jpg", "same bytes");
+
+    const result = await backUp(ports, pixel.id, ssd.id);
+
+    expect(result.copied).toBe(1);
+    expect(await fileIO.exists("/ssd", "DCIM/IMG_0002 (2).jpg")).toBe(false);
+    const [file] = await catalog.listFiles();
+    expect((await catalog.listReplicas(file!.id)).map((replica) => replica.relativePath).sort()).toEqual([
+      "DCIM/IMG_0002.jpg",
+      "DCIM/IMG_0002.jpg",
+    ]);
+  });
+
+  it("rejects and removes a copy that does not match the original", async () => {
+    const { catalog, fileIO, ports, pixel, ssd } = await twoPhonesOneDisk();
+    fileIO.seed("/pixel", "DCIM/IMG_0003.jpg", "original");
+    const corrupting: FileIO = {
+      ...fileIO,
+      walk: (root, sub) => fileIO.walk(root, sub),
+      list: (root, sub) => fileIO.list(root, sub),
+      hash: (root, rel) => fileIO.hash(root, rel),
+      read: (root, rel) => fileIO.read(root, rel),
+      exists: (root, rel) => fileIO.exists(root, rel),
+      mkdir: (root, rel) => fileIO.mkdir(root, rel),
+      remove: (root, rel) => fileIO.remove(root, rel),
+      copy: async (args) => {
+        fileIO.seed(args.toRoot, args.toRelative, "damaged in transit");
+      },
+    };
+    const damaged: Ports = { ...ports, fileIO: corrupting };
+
+    const result = await backUp(damaged, pixel.id, ssd.id);
+    expect(result).toEqual({ copied: 0, skipped: 0, failed: 1 });
+    const [run] = await catalog.listBackupRuns(1);
+    expect(run).toMatchObject({ status: "done", failed: 1, error: expect.stringContaining("did not match the original") });
+    expect(await fileIO.exists("/ssd", "DCIM/IMG_0003.jpg")).toBe(false);
+    const [file] = await catalog.listFiles();
+    expect((await catalog.listReplicas(file!.id)).map((replica) => replica.driveId)).toEqual([pixel.id]);
+  });
+
+  it("moves a file within a drive without leaving a stale copy behind", async () => {
+    const { catalog, fileIO, ports, pixel } = await twoPhonesOneDisk();
+    fileIO.seed("/pixel", "Download/receipt.pdf", "receipt");
+    await ingestFolder(ports, { driveId: pixel.id });
+    const [file] = await catalog.listFiles();
+
+    await relocateFile(ports, { fileId: file!.id, destDriveId: pixel.id, destRelativePath: "Documents/receipt.pdf" });
+
+    expect(await fileIO.exists("/pixel", "Download/receipt.pdf")).toBe(false);
+    expect((await catalog.listReplicas(file!.id)).map((replica) => replica.relativePath)).toEqual([
+      "Documents/receipt.pdf",
+    ]);
+  });
+
+  it("refuses to move onto an explicit path that already holds a different file", async () => {
+    const { catalog, fileIO, ports, pixel } = await twoPhonesOneDisk();
+    fileIO.seed("/pixel", "a/note.txt", "mine");
+    fileIO.seed("/pixel", "b/note.txt", "someone else's");
+    await ingestFolder(ports, { driveId: pixel.id, relativePath: "a" });
+    const [file] = await catalog.listFiles();
+
+    await expect(
+      relocateFile(ports, { fileId: file!.id, destDriveId: pixel.id, destRelativePath: "b/note.txt" }),
+    ).rejects.toThrow("already exists");
+    expect(text(await fileIO.read("/pixel", "a/note.txt"))).toBe("mine");
+    expect(text(await fileIO.read("/pixel", "b/note.txt"))).toBe("someone else's");
+  });
+});
+
+describe("incremental scans", () => {
+  it("does not re-read files that have not changed since the last scan", async () => {
+    const catalog = new MemoryCatalog();
+    const inner = new MemoryFileIO();
+    const volumes = new MemoryVolumes();
+    volumes.connect({ volumeId: "card", mountPath: "/card", label: "Card" });
+    inner.seed("/card", "DCIM/a.jpg", "first");
+    inner.seed("/card", "DCIM/b.jpg", "second");
+    const hashed: string[] = [];
+    const fileIO: FileIO = {
+      walk: (root, sub) => inner.walk(root, sub),
+      list: (root, sub) => inner.list(root, sub),
+      hash: (root, rel) => {
+        hashed.push(rel);
+        return inner.hash(root, rel);
+      },
+      read: (root, rel) => inner.read(root, rel),
+      exists: (root, rel) => inner.exists(root, rel),
+      mkdir: (root, rel) => inner.mkdir(root, rel),
+      copy: (args) => inner.copy(args),
+      remove: (root, rel) => inner.remove(root, rel),
+    };
+    const ports: Ports = { catalog, fileIO, volumes };
+    const card = await registerDrive(ports, { name: "Card", kind: "usb", rootPath: "/card", volumeId: "card" });
+
+    await ingestFolder(ports, { driveId: card.id });
+    expect(hashed.sort()).toEqual(["DCIM/a.jpg", "DCIM/b.jpg"]);
+
+    hashed.length = 0;
+    await ingestFolder(ports, { driveId: card.id });
+    expect(hashed).toEqual([]);
+
+    inner.seed("/card", "DCIM/b.jpg", "second, edited");
+    const edited = await ingestFolder(ports, { driveId: card.id });
+    expect(hashed).toEqual(["DCIM/b.jpg"]);
+    // An edit is a new version of the same file, not a second file.
+    expect(edited).toMatchObject({ files: 0, updated: 1 });
+    expect((await listLibrary(ports)).map((file) => file.name).sort()).toEqual(["a.jpg", "b.jpg"]);
+  });
+});

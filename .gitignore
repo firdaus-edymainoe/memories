@@ -8,3 +8,5 @@ packages/fs-android/vendor/**/adb.exe
 packages/fs-android/vendor/**/*.dll
 packages/fs-android/vendor/**/*.dylib
 
+test-results
+playwright-report

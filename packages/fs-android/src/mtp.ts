@@ -98,6 +98,8 @@ async function walkFrom(client: MtpClient, handle: number, folder: string, out: 
       kind: kindFromName(row.name),
       takenAt: row.takenAt,
       place: null,
+      // Reading a file over MTP is slow; its modification date lets unchanged files skip hashing.
+      ...(row.takenAt ? { modifiedAt: row.takenAt } : {}),
     });
   }
 }

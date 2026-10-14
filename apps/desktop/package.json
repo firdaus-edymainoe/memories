@@ -3,11 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "electron.mjs",
+  "main": "dist/main.mjs",
   "scripts": {
     "start": "tsx src/serve.ts",
-    "electron": "electron electron.mjs",
-    "test": "vitest run"
+    "build": "node scripts/build.mjs",
+    "electron": "node scripts/build.mjs && electron .",
+    "electron:dev": "node scripts/build.mjs --skip-ui && MEMORIES_UI=http://127.0.0.1:5173 electron .",
+    "test": "vitest run",
+    "test:e2e": "node scripts/build.mjs && playwright test"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.4",
@@ -17,9 +20,12 @@
     "@memories/fs-darwin": "*",
     "@memories/fs-win32": "*",
     "@memories/server": "*",
-    "electron": "^38.1.0"
+    "electron": "^38.1.0",
+    "hono": "^4.9.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "esbuild": "^0.28.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^5.0.0"
