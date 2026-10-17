@@ -35,6 +35,9 @@ import {
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
+import { CLOUD_CALLBACK_PATH, type CloudControl, cloudRoutes } from "./cloud.js";
+
+export { CLOUD_CALLBACK_PATH, type CloudControl, LOCAL_ONLY_STATUS } from "./cloud.js";
 
 /** Header carrying the per-launch secret (see `@memories/client`). */
 export const TOKEN_HEADER = "x-memories-token";
@@ -54,6 +57,10 @@ export type AppOptions = {
    * the content hash when known. Returning null serves the original file instead.
    */
   thumbnail?: (input: Thumbnailable) => Promise<{ bytes: Uint8Array; mime: string } | null>;
+  /** Optional cloud mode (account, sync, cloud storage). Leave out to stay local only. */
+  cloud?: CloudControl;
+  /** Called after a browser sign-in comes back, e.g. to bring the app window forward. */
+  onCloudSignedIn?: () => void;
 };
 
 export type Thumbnailable = { rootPath: string; relativePath: string; cacheKey: string | null };
@@ -166,7 +173,9 @@ export function createApp(ports: Ports, options: AppOptions = {}) {
   if (options.token) {
     const token = options.token;
     app.use("*", async (c, next) => {
-      if (c.req.method === "OPTIONS" || c.req.path === "/health") return next();
+      // The sign-in callback comes from the system browser, which has no token. It is protected
+      // by the one-time state and PKCE verifier of a sign-in this app started.
+      if (c.req.method === "OPTIONS" || c.req.path === "/health" || c.req.path === CLOUD_CALLBACK_PATH) return next();
       const provided = c.req.header(TOKEN_HEADER) ?? c.req.query("token");
       if (!sameSecret(provided, token)) return c.json({ error: "Unauthorized" }, 401);
       await next();
@@ -181,6 +190,8 @@ export function createApp(ports: Ports, options: AppOptions = {}) {
   });
 
   app.get("/health", (c) => c.json({ ok: true }));
+
+  app.route("/", cloudRoutes(options.cloud, options.onCloudSignedIn ? { onSignedIn: options.onCloudSignedIn } : {}));
 
   app.get("/volumes", async (c) => c.json({ volumes: await ports.volumes.list() }));
 

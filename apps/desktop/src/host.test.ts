@@ -13,7 +13,8 @@ import { access, mkdtemp, mkdir, readFile, rename, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLocalPorts } from "./host.js";
+import { PlainSecretBox } from "@memories/cloud-link";
+import { createLocalHost, createLocalPorts } from "./host.js";
 
 async function exists(path: string) {
   try {
@@ -153,5 +154,23 @@ describe("desktop host", () => {
     expect(run.status).toBe(200);
     expect(await run.json()).toMatchObject({ copied: 1 });
     expect(await readFile(join(stick, "Photos", "new-shot.jpg"), "utf8")).toBe("shot-bytes");
+  });
+
+  it("stays local only unless a cloud server is configured", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mem-host-cloud-"));
+    const local = await createLocalHost(join(dir, "catalog.sqlite"));
+    const localStatus = await (await local.app.request("/cloud/status")).json();
+    expect(localStatus.status).toMatchObject({ available: false, user: null });
+    local.stopAutoBackups();
+
+    const withCloud = await createLocalHost(
+      join(dir, "cloud", "catalog.sqlite"),
+      {},
+      { serverUrl: "http://cloud.invalid", secrets: new PlainSecretBox(), openExternal: async () => undefined },
+    );
+    const cloudStatus = await (await withCloud.app.request("/cloud/status")).json();
+    expect(cloudStatus.status).toMatchObject({ available: true, serverUrl: "http://cloud.invalid", user: null, sync: { enabled: false } });
+    expect(await exists(join(dir, "cloud", "cloud.json"))).toBe(true);
+    withCloud.stopAutoBackups();
   });
 });

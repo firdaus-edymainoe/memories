@@ -189,7 +189,7 @@ export class CloudApi implements CloudCatalogGateway {
   }
 
   /** Sends a signed request straight to the storage provider. */
-  async sendSigned(request: PresignedRequest, init: { body?: BodyInit; range?: { start: number; end: number } } = {}) {
+  async sendSigned(request: PresignedRequest, init: { body?: RequestInit["body"]; range?: { start: number; end: number } } = {}) {
     const headers = new Headers(request.headers);
     if (init.range) headers.set("range", `bytes=${init.range.start}-${init.range.end}`);
     const body = init.body;

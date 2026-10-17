@@ -174,7 +174,7 @@ export class CloudFileIO implements FileIO {
       throw error;
     }
     try {
-      await api.sendSigned(signed, { body: input.body as BodyInit });
+      await api.sendSigned(signed, { body: input.body as RequestInit["body"] });
     } catch (error) {
       if (error instanceof CloudApiError && error.status === 412) throw new DestinationExistsError(path);
       throw error;
