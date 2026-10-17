@@ -1,5 +1,5 @@
 import type { CloudProvider } from "@memories/core";
-import { type StorageSettings, storageSettingsFromEnv } from "@memories/storage";
+import { type DriveProviderSettings, driveProviderSettingsFromEnv, type StorageSettings, storageSettingsFromEnv } from "@memories/storage";
 import type { ProviderCredentials } from "./auth.js";
 import { ConsoleMailer, type Mailer, ResendMailer } from "./mailer.js";
 
@@ -9,6 +9,8 @@ export type CloudConfig = {
   secret: string;
   databaseUrl: string;
   storage: StorageSettings;
+  /** Personal drives people can connect (each needs its OAuth client). */
+  drives: DriveProviderSettings;
   providers: Partial<Record<CloudProvider, ProviderCredentials>>;
   requireEmailVerification: boolean;
   mailer: Mailer;
@@ -46,6 +48,7 @@ export function configFromEnv(env: Env = process.env): CloudConfig {
     secret,
     databaseUrl: required(env, "DATABASE_URL"),
     storage: storageSettingsFromEnv(env),
+    drives: driveProviderSettingsFromEnv(env),
     providers: providersFromEnv(env),
     requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION === "true",
     mailer: env.RESEND_API_KEY ? new ResendMailer(env.RESEND_API_KEY, required(env, "MAIL_FROM")) : new ConsoleMailer(),

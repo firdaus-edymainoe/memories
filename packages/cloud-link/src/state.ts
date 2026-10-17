@@ -1,4 +1,4 @@
-import type { CloudUser } from "@memories/core";
+import type { CloudUser, ConnectedDrive } from "@memories/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -11,6 +11,8 @@ export type CloudState = {
   syncEnabled: boolean;
   lastSyncedAt: string | null;
   lastError: string | null;
+  /** The person's own drives, as last heard from the server (so places show up offline too). */
+  drives: ConnectedDrive[];
 };
 
 export interface CloudStateStore {
@@ -35,7 +37,7 @@ export class PlainSecretBox implements SecretBox {
 }
 
 export function freshState(): CloudState {
-  return { deviceId: `dev_${randomUUID()}`, session: null, syncEnabled: false, lastSyncedAt: null, lastError: null };
+  return { deviceId: `dev_${randomUUID()}`, session: null, syncEnabled: false, lastSyncedAt: null, lastError: null, drives: [] };
 }
 
 export class MemoryStateStore implements CloudStateStore {

@@ -102,7 +102,7 @@ describe("accounts", () => {
     const t = setup();
     expect((await t.request("/v1/me")).status).toBe(401);
     expect((await t.request("/v1/me", { token: "nonsense" })).status).toBe(401);
-    expect(await (await t.request("/v1/config")).json()).toEqual({ providers: ["google"], storage: "memory" });
+    expect(await (await t.request("/v1/config")).json()).toEqual({ providers: ["google"], storage: "memory", drives: [] });
   });
 
   it("lets admins manage people while staying users themselves", async () => {

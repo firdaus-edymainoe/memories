@@ -1,5 +1,5 @@
 import type { MemoriesClient } from "@memories/client";
-import type { CloudAdminUser, CloudProvider, CloudStatus } from "@memories/core";
+import type { CloudAdminUser, CloudDriveProvider, CloudProvider, CloudStatus } from "@memories/core";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 const PROVIDER_LABEL: Record<CloudProvider, string> = {
@@ -8,6 +8,11 @@ const PROVIDER_LABEL: Record<CloudProvider, string> = {
   microsoft: "Microsoft",
   github: "GitHub",
   facebook: "Facebook",
+};
+
+const DRIVE_LABEL: Record<CloudDriveProvider, string> = {
+  "google-drive": "Google Drive",
+  onedrive: "OneDrive",
 };
 
 type Mode = "idle" | "sign-in" | "sign-up" | "forgot" | "browser";
@@ -45,6 +50,9 @@ export function CloudSettings({ client, onPlacesChanged }: { client: MemoriesCli
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** A drive being connected in the browser, and how many drives there were before. */
+  const [connecting, setConnecting] = useState<{ provider: CloudDriveProvider; before: number } | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +77,21 @@ export function CloudSettings({ client, onPlacesChanged }: { client: MemoriesCli
     }, 2000);
     return () => window.clearInterval(timer);
   }, [client, mode]);
+
+  // While someone allows access to a drive in the browser, check back until it shows up.
+  useEffect(() => {
+    if (!connecting) return;
+    const timer = window.setInterval(() => {
+      void client.cloudStatus().then((next) => {
+        setStatus(next);
+        if (next.drives.length > connecting.before) {
+          setConnecting(null);
+          setNotice(`${DRIVE_LABEL[connecting.provider]} is connected. Add it to your places to use it.`);
+        }
+      });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [client, connecting]);
 
   async function act(work: () => Promise<unknown>, done?: string) {
     setBusy(true);
@@ -293,6 +316,121 @@ export function CloudSettings({ client, onPlacesChanged }: { client: MemoriesCli
                 </button>
               )}
             </div>
+            {status.driveProviders.length || status.drives.length ? (
+              <div className="setting-row cloud-drives">
+                <div>
+                  <strong>Your own drives</strong>
+                  <span>
+                    Use your Google Drive or OneDrive storage. Memories keeps its files in its own folder there and can’t see anything
+                    else. Connect as many as you like.
+                  </span>
+                  {status.drives.length ? (
+                    <ul className="cloud-drive-list" aria-label="Your drives">
+                      {status.drives.map((drive) => (
+                        <li key={drive.id}>
+                          <div>
+                            <strong>{drive.label}</strong>
+                            <span>
+                              {drive.status === "reconnect"
+                                ? "Memories can’t reach this drive anymore. Connect it again."
+                                : drive.placeId
+                                  ? "In your places."
+                                  : "Connected."}
+                            </span>
+                          </div>
+                          {disconnecting === drive.id ? (
+                            <div className="cloud-actions">
+                              <span>Stop using it? Your files stay in your drive.</span>
+                              <button
+                                type="button"
+                                className="btn btn-danger"
+                                disabled={busy}
+                                onClick={() =>
+                                  void act(async () => {
+                                    await client.cloudDisconnectDrive(drive.id);
+                                    setDisconnecting(null);
+                                    onPlacesChanged();
+                                  }, `${drive.label} is disconnected.`)
+                                }
+                              >
+                                Disconnect
+                              </button>
+                              <button type="button" className="btn btn-quiet" onClick={() => setDisconnecting(null)}>
+                                Keep
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="cloud-actions">
+                              {drive.status === "reconnect" ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-soft"
+                                  disabled={busy || connecting !== null}
+                                  onClick={() =>
+                                    void act(async () => {
+                                      await client.cloudConnectDrive(drive.provider);
+                                      setConnecting({ provider: drive.provider, before: status.drives.length });
+                                    })
+                                  }
+                                >
+                                  Connect again
+                                </button>
+                              ) : drive.placeId ? (
+                                <em className="chip ok">In your places</em>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-soft"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void act(async () => {
+                                      await client.cloudAddDrivePlace(drive.id);
+                                      onPlacesChanged();
+                                    }, `${drive.label} is now one of your places.`)
+                                  }
+                                >
+                                  Add to places
+                                </button>
+                              )}
+                              <button type="button" className="btn btn-quiet danger" onClick={() => setDisconnecting(drive.id)}>
+                                Disconnect
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {connecting ? (
+                    <div className="cloud-actions cloud-connecting">
+                      <span>Finish connecting {DRIVE_LABEL[connecting.provider]} in your browser, then come back here.</span>
+                      <button type="button" className="btn btn-quiet" onClick={() => setConnecting(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : status.driveProviders.length ? (
+                    <div className="cloud-actions cloud-connect">
+                      {status.driveProviders.map((provider) => (
+                        <button
+                          key={provider}
+                          type="button"
+                          className="btn btn-soft"
+                          disabled={busy}
+                          onClick={() =>
+                            void act(async () => {
+                              await client.cloudConnectDrive(provider);
+                              setConnecting({ provider, before: status.drives.length });
+                            })
+                          }
+                        >
+                          Connect {DRIVE_LABEL[provider]}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
 

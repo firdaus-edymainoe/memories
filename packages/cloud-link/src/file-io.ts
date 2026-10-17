@@ -1,6 +1,7 @@
 import {
   type ByteRange,
   type CloudUser,
+  type ConnectedDrive,
   type CopyArgs,
   DestinationExistsError,
   type DirEntry,
@@ -12,32 +13,48 @@ import {
   type VolumePresence,
   type Volumes,
 } from "@memories/core";
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { type CloudApi, CloudApiError } from "./api.js";
+import { type CloudApi, CloudApiError, type CloudStorageClient } from "./api.js";
 
 const SCHEME = "cloud://";
+const DRIVES = "/drives/";
 
-/** The root path of a person's cloud storage place. One per account. */
-export function cloudRoot(userId: string) {
-  return `${SCHEME}${userId}`;
+/**
+ * The root path of a cloud place: `cloud://<userId>` is the person's Memories Cloud, and
+ * `cloud://<userId>/drives/<driveId>` is one of the drives they connected.
+ */
+export function cloudRoot(userId: string, driveId: string | null = null) {
+  return driveId === null ? `${SCHEME}${userId}` : `${SCHEME}${userId}${DRIVES}${driveId}`;
 }
 
-export function cloudVolumeId(userId: string) {
-  return `cloud:${userId}`;
+export function cloudVolumeId(userId: string, driveId: string | null = null) {
+  return driveId === null ? `cloud:${userId}` : `cloud:${userId}${DRIVES}${driveId}`;
 }
 
 export function isCloudPath(rootPath: string) {
   return rootPath.startsWith(SCHEME);
 }
 
-/** Who is signed in right now, and how to reach the server for them. */
+/** Whose cloud place a root path is, and which space: Memories Cloud (`driveId` null) or a drive. */
+export function parseCloudRoot(rootPath: string): { userId: string; driveId: string | null } | null {
+  if (!isCloudPath(rootPath)) return null;
+  const rest = rootPath.slice(SCHEME.length);
+  const cut = rest.indexOf(DRIVES);
+  if (cut < 0) return rest && !rest.includes("/") ? { userId: rest, driveId: null } : null;
+  const userId = rest.slice(0, cut);
+  const driveId = rest.slice(cut + DRIVES.length);
+  return userId && driveId && !driveId.includes("/") ? { userId, driveId } : null;
+}
+
+/** Who is signed in right now, how to reach the server for them, and the drives they connected. */
 export interface CloudConnection {
-  current(): { user: CloudUser; api: CloudApi } | null;
+  current(): { user: CloudUser; api: CloudApi; drives: ConnectedDrive[] } | null;
 }
 
 function basename(path: string) {
@@ -52,15 +69,26 @@ function basename(path: string) {
 export class CloudFileIO implements FileIO {
   constructor(private readonly connection: CloudConnection) {}
 
-  private api(rootPath: string) {
+  /** The storage space a cloud place points at, after checking it belongs to who is signed in. */
+  private space(rootPath: string): CloudStorageClient {
     const current = this.connection.current();
     if (!current) throw new Error("Sign in to Memories Cloud to use cloud storage");
-    if (rootPath !== cloudRoot(current.user.id)) throw new Error("This cloud storage belongs to another account");
-    return current.api;
+    const root = parseCloudRoot(rootPath);
+    if (!root || root.userId !== current.user.id) throw new Error("This cloud storage belongs to another account");
+    if (root.driveId !== null) {
+      const drive = current.drives.find((each) => each.id === root.driveId);
+      if (!drive) throw new Error("This drive isn't connected to your account anymore");
+      if (drive.status === "reconnect") throw new Error(`${drive.label} needs to be connected again in Settings`);
+    }
+    return current.api.storage(root.driveId);
+  }
+
+  private api() {
+    return this.connection.current()!.api;
   }
 
   async walk(rootPath: string, subPath = ""): Promise<FileStat[]> {
-    const entries = await this.api(rootPath).listStorage(relativeInsideRoot(subPath), true);
+    const entries = await this.space(rootPath).list(relativeInsideRoot(subPath), true);
     return entries
       .filter((entry) => !entry.directory)
       .map((entry) => {
@@ -78,7 +106,7 @@ export class CloudFileIO implements FileIO {
   }
 
   async list(rootPath: string, subPath = ""): Promise<DirEntry[]> {
-    const entries = await this.api(rootPath).listStorage(relativeInsideRoot(subPath));
+    const entries = await this.space(rootPath).list(relativeInsideRoot(subPath));
     return entries
       .map((entry) => {
         const name = basename(entry.path);
@@ -94,15 +122,26 @@ export class CloudFileIO implements FileIO {
   }
 
   private async stat(rootPath: string, relativePath: string) {
-    const stat = await this.api(rootPath).statStorage(relativeInsideRoot(relativePath));
+    const stat = await this.space(rootPath).stat(relativeInsideRoot(relativePath));
     if (!stat) throw new Error(`No file at ${relativePath} in cloud storage`);
     return stat;
   }
 
+  /**
+   * The SHA-256 recorded at upload. Files without one (put there outside Memories, or on a
+   * drive that drops metadata) are read and hashed here.
+   */
   async hash(rootPath: string, relativePath: string) {
     const stat = await this.stat(rootPath, relativePath);
-    if (!stat.sha256) throw new Error(`Cloud storage has no checksum for ${relativePath}`);
-    return stat.sha256;
+    if (stat.sha256) return stat.sha256;
+    const hash = createHash("sha256");
+    const reader = (await this.stream(rootPath, relativePath)).getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      hash.update(value);
+    }
+    return hash.digest("hex");
   }
 
   async size(rootPath: string, relativePath: string) {
@@ -110,13 +149,12 @@ export class CloudFileIO implements FileIO {
   }
 
   async exists(rootPath: string, relativePath: string) {
-    return (await this.api(rootPath).statStorage(relativeInsideRoot(relativePath))) !== null;
+    return (await this.space(rootPath).stat(relativeInsideRoot(relativePath))) !== null;
   }
 
   private async download(rootPath: string, relativePath: string, range?: ByteRange) {
-    const api = this.api(rootPath);
-    const signed = await api.prepareDownload(relativeInsideRoot(relativePath));
-    return api.sendSigned(signed, range ? { range } : {});
+    const signed = await this.space(rootPath).prepareDownload(relativeInsideRoot(relativePath));
+    return this.api().sendSigned(signed, range ? { range } : {});
   }
 
   async read(rootPath: string, relativePath: string) {
@@ -137,14 +175,23 @@ export class CloudFileIO implements FileIO {
 
   /** Folders are only prefixes in object storage: nothing to create. */
   async mkdir(rootPath: string) {
-    this.api(rootPath);
+    this.space(rootPath);
   }
 
+  /** Within one space the provider copies; between two spaces the bytes pass through here. */
   async copy(args: CopyArgs) {
-    const api = this.api(args.toRoot);
-    this.api(args.fromRoot);
+    const to = this.space(args.toRoot);
+    this.space(args.fromRoot);
+    if (args.fromRoot !== args.toRoot) {
+      const relative = relativeInsideRoot(args.fromRelative);
+      const sha256 = await this.hash(args.fromRoot, relative);
+      const size = await this.size(args.fromRoot, relative);
+      await this.upload({ toRoot: args.toRoot, toRelative: args.toRelative, size, sha256, body: await this.stream(args.fromRoot, relative) });
+      args.onProgress?.(1);
+      return;
+    }
     try {
-      await api.copyStorage(relativeInsideRoot(args.fromRelative), relativeInsideRoot(args.toRelative));
+      await to.copy(relativeInsideRoot(args.fromRelative), relativeInsideRoot(args.toRelative));
     } catch (error) {
       if (error instanceof CloudApiError && error.status === 409) throw new DestinationExistsError(relativeInsideRoot(args.toRelative));
       throw error;
@@ -164,42 +211,51 @@ export class CloudFileIO implements FileIO {
     sha256: string;
     body: ReadableStream<Uint8Array> | Uint8Array;
   }) {
-    const api = this.api(input.toRoot);
+    const space = this.space(input.toRoot);
     const path = relativeInsideRoot(input.toRelative);
     let signed;
     try {
-      signed = await api.prepareUpload({ path, size: input.size, sha256: input.sha256, contentType: mimeFromName(basename(path)) });
+      signed = await space.prepareUpload({ path, size: input.size, sha256: input.sha256, contentType: mimeFromName(basename(path)) });
     } catch (error) {
       if (error instanceof CloudApiError && error.status === 409) throw new DestinationExistsError(path);
       throw error;
     }
     try {
-      await api.sendSigned(signed, { body: input.body as RequestInit["body"] });
+      await this.api().uploadSigned(signed, input.body, input.size);
     } catch (error) {
-      if (error instanceof CloudApiError && error.status === 412) throw new DestinationExistsError(path);
+      if (error instanceof CloudApiError && (error.status === 412 || error.status === 409)) throw new DestinationExistsError(path);
       throw error;
     }
   }
 
   async remove(rootPath: string, relativePath: string) {
-    await this.api(rootPath).removeStorage(relativeInsideRoot(relativePath));
+    await this.space(rootPath).remove(relativeInsideRoot(relativePath));
   }
 }
 
-/** The cloud place is "plugged in" while its account is signed in. */
+/**
+ * Cloud places are "plugged in" while their account is signed in: Memories Cloud, and each
+ * connected drive that still lets us in.
+ */
 export class CloudVolumes implements Volumes {
   constructor(private readonly connection: CloudConnection) {}
 
   async list(): Promise<VolumePresence[]> {
     const current = this.connection.current();
     if (!current) return [];
-    return [{ volumeId: cloudVolumeId(current.user.id), mountPath: cloudRoot(current.user.id), label: "Memories Cloud" }];
+    const userId = current.user.id;
+    return [
+      { volumeId: cloudVolumeId(userId), mountPath: cloudRoot(userId), label: "Memories Cloud" },
+      ...current.drives
+        .filter((drive) => drive.status === "connected")
+        .map((drive) => ({ volumeId: cloudVolumeId(userId, drive.id), mountPath: cloudRoot(userId, drive.id), label: drive.label })),
+    ];
   }
 
   async identify(rootPath: string): Promise<VolumePresence> {
-    const current = this.connection.current();
-    if (!current || rootPath !== cloudRoot(current.user.id)) throw new Error("Sign in to Memories Cloud to use cloud storage");
-    return (await this.list())[0]!;
+    const found = (await this.list()).find((volume) => volume.mountPath === rootPath);
+    if (!found) throw new Error("Sign in to Memories Cloud and connect this drive to use it");
+    return found;
   }
 }
 

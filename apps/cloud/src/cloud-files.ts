@@ -42,25 +42,20 @@ function folderPrefix(path: string) {
 }
 
 /**
- * Each person's cloud storage. Built on `ObjectStorage`, so it works the same on any provider.
- * Everyone gets their own prefix; nothing here can reach another person's files.
+ * One storage space a person's files live in: their part of Memories Cloud, or one of the drives
+ * they connected. Built on `ObjectStorage`, so it works the same on every provider.
  */
-export class CloudFiles {
+export class CloudSpace {
   constructor(private readonly storage: ObjectStorage) {}
 
   get provider() {
     return this.storage.provider;
   }
 
-  private space(userId: string) {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(userId)) throw new Error("Unexpected user id");
-    return this.storage.scoped(`users/${userId}/files/`);
-  }
-
   /** One folder's contents, or with `recursive` every file below it. */
-  async list(userId: string, folder: string, options: { recursive?: boolean } = {}): Promise<CloudEntry[]> {
+  async list(folder: string, options: { recursive?: boolean } = {}): Promise<CloudEntry[]> {
     const prefix = folderPrefix(folder);
-    const listing = await this.space(userId).list(prefix, options.recursive ? {} : { delimiter: "/" });
+    const listing = await this.storage.list(prefix, options.recursive ? {} : { delimiter: "/" });
     const folders: CloudEntry[] = listing.prefixes.map((value) => ({
       path: value.replace(/\/$/, ""),
       directory: true,
@@ -73,8 +68,8 @@ export class CloudFiles {
     return [...folders, ...files];
   }
 
-  async stat(userId: string, path: string): Promise<CloudFileStat | null> {
-    const object = await this.space(userId).head(filePath(path));
+  async stat(path: string): Promise<CloudFileStat | null> {
+    const object = await this.storage.head(filePath(path));
     if (!object) return null;
     return {
       path,
@@ -86,30 +81,51 @@ export class CloudFiles {
   }
 
   /** A signed upload for a new file. Throws `ObjectExistsError` if the path is taken. */
-  prepareUpload(userId: string, input: { path: string; size: number; sha256: string; contentType: string }): Promise<PresignedRequest> {
+  prepareUpload(input: { path: string; size: number; sha256: string; contentType: string }): Promise<PresignedRequest> {
     if (!SHA256.test(input.sha256)) throw new CloudInputError("sha256 must be 64 lower-case hex characters");
-    return this.space(userId).presignUpload(filePath(input.path), {
+    return this.storage.presignUpload(filePath(input.path), {
       size: input.size,
       contentType: input.contentType || "application/octet-stream",
       metadata: { sha256: input.sha256 },
     });
   }
 
-  prepareDownload(userId: string, path: string, fileName?: string): Promise<PresignedRequest> {
-    return this.space(userId).presignDownload(filePath(path), fileName ? { fileName } : {});
+  prepareDownload(path: string, fileName?: string): Promise<PresignedRequest> {
+    return this.storage.presignDownload(filePath(path), fileName ? { fileName } : {});
   }
 
-  copy(userId: string, from: string, to: string) {
-    return this.space(userId).copy(filePath(from), filePath(to));
+  copy(from: string, to: string) {
+    return this.storage.copy(filePath(from), filePath(to));
   }
 
-  remove(userId: string, path: string) {
-    return this.space(userId).delete(filePath(path));
+  remove(path: string) {
+    return this.storage.delete(filePath(path));
+  }
+
+  /** Deletes every file in this space. */
+  async removeAll() {
+    for (const object of (await this.storage.list("")).objects) await this.storage.delete(object.key);
+  }
+}
+
+/**
+ * Memories Cloud: the storage this server runs (Backblaze B2 or another provider). Everyone gets
+ * their own prefix; nothing here can reach another person's files.
+ */
+export class CloudFiles {
+  constructor(private readonly storage: ObjectStorage) {}
+
+  get provider() {
+    return this.storage.provider;
+  }
+
+  space(userId: string) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(userId)) throw new Error("Unexpected user id");
+    return new CloudSpace(this.storage.scoped(`users/${userId}/files/`));
   }
 
   /** Deletes everything a person stored (their account is gone). */
-  async removeAll(userId: string) {
-    const space = this.space(userId);
-    for (const object of (await space.list("")).objects) await space.delete(object.key);
+  removeAll(userId: string) {
+    return this.space(userId).removeAll();
   }
 }

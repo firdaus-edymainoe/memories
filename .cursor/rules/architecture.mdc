@@ -21,9 +21,9 @@ Core is application logic. Disks, OS APIs, and SQLite are adapters. The UI is a 
 - `packages/fs-darwin` — FileIO + Volumes for macOS. No Drizzle. Do not import win32.
 - `packages/fs-win32` — FileIO + Volumes for Windows. No Drizzle. Do not import darwin.
 - `packages/fs-android` — FileIO + Volumes for Android. MTP first (`mtp://`), bundled `adb` fallback (`adb://`). No Drizzle. Do not import darwin/win32.
-- `packages/storage` — `ObjectStorage` (abstract class) with `S3CompatibleStorage` for Backblaze B2, S3, R2 or any S3 server. Pick the provider by configuration, never by `if` in callers.
-- `packages/db-postgres` — `CloudCatalogStore` in PostgreSQL (Drizzle). Each device's catalog under its own person and device.
-- `packages/cloud-link` — the desktop side of cloud mode: `CloudService` (account, sync, admin), `CloudFileIO` (`cloud://<userId>` paths), and routers that send cloud paths to it.
+- `packages/storage` — `ObjectStorage` (abstract class) with `S3CompatibleStorage` for Backblaze B2, S3, R2 or any S3 server, and `GoogleDriveStorage` / `OneDriveStorage` (on `DriveObjectStorage`) for people's own drives. `DriveProvider` holds each drive's OAuth and builds its storage. Pick the provider by configuration, never by `if` in callers.
+- `packages/db-postgres` — `CloudCatalogStore` and `DriveConnectionStore` in PostgreSQL (Drizzle). Each device's catalog under its own person and device.
+- `packages/cloud-link` — the desktop side of cloud mode: `CloudService` (account, sync, admin, connected drives), `CloudFileIO` (`cloud://<userId>` for Memories Cloud, `cloud://<userId>/drives/<driveId>` for a connected drive), and routers that send cloud paths to it.
 - Ingest that needs catalog and disk is a **use case** calling both ports, not a leaky adapter.
 
 ## Host
@@ -32,7 +32,7 @@ Core is application logic. Disks, OS APIs, and SQLite are adapters. The UI is a 
 
 ## Cloud mode (optional)
 
-`apps/cloud` is the hosted server: Hono + Better Auth (`admin` and `user` roles, bearer sessions, PKCE hand-off from the system browser) + `CloudCatalogStore` + `ObjectStorage`. Sync is one way, device → cloud: SQLite triggers queue changed rows (`sync_changes`) only while sync is on, and core's `syncCatalog` sends them in batches. Cloud storage is a place of kind `cloud`; bytes go straight between the app and the provider through signed URLs.
+`apps/cloud` is the hosted server: Hono + Better Auth (`admin` and `user` roles, bearer sessions, PKCE hand-off from the system browser) + `CloudCatalogStore` + `ObjectStorage`. Sync is one way, device → cloud: SQLite triggers queue changed rows (`sync_changes`) only while sync is on, and core's `syncCatalog` sends them in batches. Cloud storage is a place of kind `cloud`; bytes go straight between the app and the provider through signed URLs. People can also connect their own Google Drives and OneDrives (several each); every one is its own `cloud` place on the same `ObjectStorage` contract, reached through `/v1/drives/:id/storage`.
 
 ## A drive is a folder
 

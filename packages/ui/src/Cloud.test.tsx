@@ -1,5 +1,5 @@
 import type { MemoriesClient } from "@memories/client";
-import type { CloudAdminUser, CloudStatus, CloudUser } from "@memories/core";
+import type { CloudAdminUser, CloudDriveProvider, CloudStatus, CloudUser } from "@memories/core";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { CloudSettings } from "./Cloud.js";
@@ -17,6 +17,8 @@ function fakeCloud(initial: Partial<CloudStatus> = {}) {
     user: null,
     sync: { enabled: false, pending: 0, lastSyncedAt: null, error: null, running: false },
     storageDriveId: null,
+    driveProviders: [],
+    drives: [],
     ...initial,
   };
   let people: CloudAdminUser[] = [
@@ -54,6 +56,27 @@ function fakeCloud(initial: Partial<CloudStatus> = {}) {
       calls.push("addStorage");
       status = { ...status, storageDriveId: "drv_cloud" };
       return { id: "drv_cloud" };
+    },
+    cloudConnectDrive: async (provider: CloudDriveProvider) => {
+      calls.push(`connect:${provider}`);
+      // The person allows access in the browser; the drive shows up a moment later.
+      const n = status.drives.length + 1;
+      const email = `me${n}@example.com`;
+      status = {
+        ...status,
+        drives: [...status.drives, { id: `own${n}`, provider, label: `Drive ${n} (${email})`, email, status: "connected", connectedAt: "2026-10-17T00:00:00Z", placeId: null }],
+      };
+      return { url: "" };
+    },
+    cloudAddDrivePlace: async (id: string) => {
+      calls.push(`place:${id}`);
+      status = { ...status, drives: status.drives.map((d) => (d.id === id ? { ...d, placeId: `drv_${id}` } : d)) };
+      return { id: `drv_${id}` };
+    },
+    cloudDisconnectDrive: async (id: string) => {
+      calls.push(`disconnect:${id}`);
+      status = { ...status, drives: status.drives.filter((d) => d.id !== id) };
+      return { ok: true };
     },
     cloudUsers: async () => ({ users: people, total: people.length }),
     cloudSetRole: async (id: string, role: string) => {
@@ -130,6 +153,44 @@ describe("CloudSettings", () => {
     fireEvent.click(within(signUp).getByRole("button", { name: "Create account" }));
     expect(await screen.findByText(/We sent you an email/)).toBeTruthy();
     expect(screen.getByText("Please confirm your email.", { exact: false })).toBeTruthy();
+  });
+
+  it("connects several of the person's own drives and adds them as places", async () => {
+    const { client, calls } = fakeCloud({ user: { ...me, role: "user" }, driveProviders: ["google-drive", "onedrive"] });
+    let placesChanged = 0;
+    render(<CloudSettings client={client} onPlacesChanged={() => placesChanged++} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Google Drive" }));
+    expect(await screen.findByText(/Finish connecting Google Drive in your browser/)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: "Your drives" }, { timeout: 4000 });
+    expect(within(list).getByText("Drive 1 (me1@example.com)")).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connect OneDrive" }, { timeout: 4000 }));
+    await within(list).findByText("Drive 2 (me2@example.com)", {}, { timeout: 4000 });
+    expect(calls).toEqual(expect.arrayContaining(["connect:google-drive", "connect:onedrive"]));
+
+    const first = within(list).getByText("Drive 1 (me1@example.com)").closest("li")!;
+    fireEvent.click(within(first).getByRole("button", { name: "Add to places" }));
+    expect(await within(first).findByText("In your places")).toBeTruthy();
+    expect(placesChanged).toBe(1);
+
+    const second = within(list).getByText("Drive 2 (me2@example.com)").closest("li")!;
+    fireEvent.click(within(second).getByRole("button", { name: "Disconnect" }));
+    expect(within(second).getByText(/Your files stay in your drive/)).toBeTruthy();
+    fireEvent.click(within(second).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(within(list).queryByText("Drive 2 (me2@example.com)")).toBeNull());
+    expect(calls).toEqual(expect.arrayContaining(["place:own1", "disconnect:own2"]));
+  });
+
+  it("asks to connect a drive again when it stopped working", async () => {
+    const { client, calls } = fakeCloud({
+      user: { ...me, role: "user" },
+      driveProviders: ["google-drive"],
+      drives: [{ id: "own1", provider: "google-drive", label: "Google Drive (me@gmail.com)", email: "me@gmail.com", status: "reconnect", connectedAt: "2026-10-17T00:00:00Z", placeId: "drv_own1" }],
+    });
+    render(<CloudSettings client={client} onPlacesChanged={() => undefined} />);
+    expect(await screen.findByText(/can’t reach this drive anymore/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Connect again" }));
+    await waitFor(() => expect(calls).toContain("connect:google-drive"));
   });
 
   it("lets an admin manage people, but not remove themselves", async () => {

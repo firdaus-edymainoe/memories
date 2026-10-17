@@ -19,6 +19,8 @@ function fakeCloud(overrides: Partial<CloudControl> = {}) {
     user,
     sync: { enabled: false, pending: 0, lastSyncedAt: null, error: null, running: false },
     storageDriveId: null,
+    driveProviders: [],
+    drives: [],
   };
   const cloud = {
     status: async () => status,
@@ -38,6 +40,11 @@ function fakeCloud(overrides: Partial<CloudControl> = {}) {
     banUser: record("banUser"),
     unbanUser: record("unbanUser"),
     removeUser: record("removeUser"),
+    connectDrive: record("connectDrive", { url: "https://accounts.google.com/o/oauth2/v2/auth" }),
+    completeDriveConnection: record("completeDriveConnection", { id: "own1", label: "Google Drive (me@gmail.com)" }),
+    renameDrive: record("renameDrive", { id: "own1", label: "Photos" }),
+    disconnectDrive: record("disconnectDrive"),
+    addDrivePlace: record("addDrivePlace", { id: "drv_own1", kind: "cloud" }),
     ...overrides,
   } as CloudControl;
   return { cloud, calls };
@@ -89,6 +96,35 @@ describe("cloud routes", () => {
     const bad = await app(failing.cloud).request("/cloud/callback?code=abc&state=xyz");
     expect(bad.status).toBe(400);
     expect(await bad.text()).toContain("took too long");
+  });
+
+  it("connects the person's own drives through the browser", async () => {
+    let focused = 0;
+    const { cloud, calls } = fakeCloud();
+    const a = app(cloud, () => focused++);
+    expect((await a.request("http://127.0.0.1:4100/cloud/drives/connect", post("", { provider: "onedrive" }))).status).toBe(200);
+    expect((await a.request("/cloud/drives/connect", post("", { provider: "dropbox" }))).status).toBe(400);
+    // The browser comes back without the launch token.
+    const back = await a.request("/cloud/drives/callback?code=c&state=s");
+    expect(await back.text()).toContain("Google Drive (me@gmail.com) is ready");
+    expect(focused).toBe(1);
+    expect((await a.request("/cloud/drives/callback?code=c")).status).toBe(400);
+    expect((await a.request("/cloud/drives/own1/place", post(""))).status).toBe(201);
+    expect((await a.request("/cloud/drives/own1/rename", post("", { label: " Photos " }))).status).toBe(200);
+    expect((await a.request("/cloud/drives/own1/rename", post("", { label: " " }))).status).toBe(400);
+    expect((await a.request("/cloud/drives/own1/disconnect", post(""))).status).toBe(200);
+    expect(calls).toEqual([
+      ["connectDrive", ["onedrive", "http://127.0.0.1:4100/cloud/drives/callback"]],
+      ["completeDriveConnection", { state: "s", code: "c" }],
+      ["addDrivePlace", "own1"],
+      ["renameDrive", ["own1", "Photos"]],
+      ["disconnectDrive", "own1"],
+    ]);
+
+    const denied = fakeCloud({ completeDriveConnection: async () => Promise.reject(new Error("You didn't allow Memories to use that drive.")) });
+    const no = await app(denied.cloud).request("/cloud/drives/callback?error=access_denied&state=s");
+    expect(no.status).toBe(400);
+    expect(await no.text()).toContain("didn&#39;t allow");
   });
 
   it("passes cloud errors through with their status", async () => {

@@ -8,6 +8,7 @@ What it does:
 - **Roles.** Everyone is a `user`, and an `admin` is a user who can also manage people (list, make admin, block, remove). Admins manage people from Settings in the app.
 - **Catalog sync.** Each device sends its SQLite catalog (places, files, copies, folders, versions, backups) to PostgreSQL, keyed by person and device.
 - **Cloud storage.** Signed uploads and downloads to any S3-compatible provider. The app shows it as a place called Memories Cloud.
+- **Your own drives.** People connect their own Google Drive or OneDrive accounts, as many as they like (two Google accounts and a work OneDrive is fine). Each one is a place in the app, and Memories manages the files in its own folder there.
 
 ## Run it
 
@@ -54,6 +55,26 @@ All of them need `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_A
 
 Files never overwrite each other: the server refuses an upload or copy to a path that's taken. On AWS and R2 this is also enforced by the provider (`If-None-Match`).
 
+## Bring your own drive
+
+Google Drive and OneDrive don't speak S3, so each has an adapter (`GoogleDriveStorage`, `OneDriveStorage` in `packages/storage`) that implements the same `ObjectStorage` contract as the S3 adapter. The rest of the server and the app only see that contract: the same `/storage` endpoints, signed uploads and downloads, never overwriting.
+
+| Drive | Turn it on with | Access Memories asks for | Where files go |
+| --- | --- | --- | --- |
+| Google Drive | `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET` | `drive.file`: only files Memories made | a `Memories` folder in My Drive |
+| OneDrive (personal, work or school) | `ONEDRIVE_CLIENT_ID`, `ONEDRIVE_CLIENT_SECRET` (`ONEDRIVE_TENANT_ID`, default `common`) | `Files.ReadWrite.AppFolder`, `User.Read`, `offline_access` | `Apps/Memories` |
+
+Register `<BETTER_AUTH_URL>/drives/callback` as the redirect URI for both. For Google, turn on the Drive API in the same Google Cloud project; the sign-in client can be reused.
+
+How connecting works: the app sends a PKCE challenge, the person allows access in their browser, this server trades the provider's code for tokens and sends a sealed one-time code back to the app on `127.0.0.1`, and only that app (with its verifier) can turn it into a connection on its own signed-in account. Refresh tokens are stored encrypted (AES-256-GCM, key derived from `BETTER_AUTH_SECRET`). When a provider stops accepting them, the drive shows "Connect again" in the app. Disconnecting revokes access and leaves the files in the person's drive.
+
+Provider differences the adapters absorb:
+
+- **Uploads** go straight from the app to the drive: Google's resumable session URL, or a OneDrive upload session sent in 10 MiB pieces. Neither URL carries a token.
+- **Downloads** use OneDrive's pre-authenticated download URL. Google Drive has no such URL, so the signed request carries a short-lived access token for that drive (scoped to Memories' own files).
+- **Checksums** are kept in Google's private `appProperties` and in the OneDrive item's description. Work OneDrive accounts drop descriptions; the app then hashes the file itself.
+- **Delete** moves files to the person's trash or recycle bin.
+
 ## Sign-in providers
 
 For each provider, register this redirect URI: `<BETTER_AUTH_URL>/api/auth/callback/<provider>`, for example `https://cloud.example.com/api/auth/callback/google`.
@@ -69,6 +90,11 @@ The desktop app signs in through the system browser (RFC 8252). It opens `/deskt
 | `GET /v1/me` | The signed-in person |
 | `PUT /v1/devices/:id`, `GET /v1/devices` | Devices that sync |
 | `POST /v1/sync` | One batch of catalog changes from a device |
-| `/v1/storage/*` | List, stat, signed upload and download, copy, delete |
+| `/v1/storage/*` | Memories Cloud: list, stat, signed upload and download, copy, delete |
+| `GET /v1/drives` | The person's connected drives, and which kinds can be connected |
+| `POST /v1/drives/connect`, `POST /v1/drives/complete` | Connect a drive (see above) |
+| `PATCH /v1/drives/:id`, `DELETE /v1/drives/:id` | Rename or disconnect one |
+| `/v1/drives/:id/storage/*` | The same storage API, on that drive |
+| `GET /drives/callback` | Where the provider sends the browser |
 
 The desktop app sends `Authorization: Bearer <session token>` and keeps the token sealed with the OS keychain (Electron `safeStorage`).

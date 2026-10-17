@@ -2,7 +2,9 @@ import {
   type CloudAdminUser,
   type CloudCatalogGateway,
   type CloudDevice,
+  type CloudDriveProvider,
   type CloudProvider,
+  type ConnectedDrive,
   type CloudRole,
   type CloudUser,
   type SyncBatch,
@@ -21,7 +23,14 @@ export class CloudApiError extends Error {
   }
 }
 
-export type PresignedRequest = { method: "GET" | "PUT"; url: string; headers: Record<string, string>; expiresAt: string };
+export type PresignedRequest = {
+  method: "GET" | "PUT";
+  url: string;
+  headers: Record<string, string>;
+  expiresAt: string;
+  /** Send the upload in consecutive pieces of at most `maxBytes`, each with `content-range`. */
+  chunked?: { maxBytes: number };
+};
 export type CloudEntry = { path: string; directory: boolean; size: number; modifiedAt: string | null };
 export type CloudFileStat = { path: string; size: number; modifiedAt: string; contentType: string | null; sha256: string | null };
 
@@ -48,7 +57,8 @@ export class CloudApi implements CloudCatalogGateway {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private async call<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<{ body: T; response: Response }> {
+  /** @internal Used by `CloudStorageClient`. */
+  async call<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<{ body: T; response: Response }> {
     const headers = new Headers(init.headers);
     const token = this.token();
     if (token) headers.set("authorization", `Bearer ${token}`);
@@ -78,7 +88,7 @@ export class CloudApi implements CloudCatalogGateway {
   }
 
   config() {
-    return this.call<{ providers: CloudProvider[]; storage: string }>("/v1/config").then((r) => r.body);
+    return this.call<{ providers: CloudProvider[]; storage: string; drives?: CloudDriveProvider[] }>("/v1/config").then((r) => r.body);
   }
 
   private async session(path: string, json: unknown) {
@@ -145,52 +155,69 @@ export class CloudApi implements CloudCatalogGateway {
     await this.call("/v1/sync", { method: "POST", json: batch });
   }
 
-  listStorage(path: string, recursive = false) {
-    const params = new URLSearchParams({ path });
-    if (recursive) params.set("recursive", "1");
-    return this.call<{ entries: CloudEntry[] }>(`/v1/storage/list?${params}`).then((r) => r.body.entries);
+  /** Files in Memories Cloud (`null`) or in one of the person's own drives. Same API for both. */
+  storage(driveId: string | null) {
+    return new CloudStorageClient(this, driveId === null ? "/v1/storage" : `/v1/drives/${encodeURIComponent(driveId)}/storage`);
   }
 
-  async statStorage(path: string): Promise<CloudFileStat | null> {
-    try {
-      return (await this.call<{ file: CloudFileStat }>(`/v1/storage/stat?${new URLSearchParams({ path })}`)).body.file;
-    } catch (error) {
-      if (error instanceof CloudApiError && error.status === 404) return null;
-      throw error;
-    }
+  // The person's own drives (Google Drive, OneDrive)
+
+  listDrives() {
+    return this.call<{ providers: CloudDriveProvider[]; drives: ConnectedDrive[] }>("/v1/drives").then((r) => r.body);
   }
 
-  prepareUpload(input: { path: string; size: number; sha256: string; contentType: string }) {
-    return this.call<{ upload: PresignedRequest }>("/v1/storage/uploads", { method: "POST", json: input }).then((r) => r.body.upload);
+  /** Where the system browser goes so the person can allow access to their drive. */
+  startDriveConnection(input: { provider: CloudDriveProvider; redirectUri: string; state: string; codeChallenge: string }) {
+    return this.call<{ url: string }>("/v1/drives/connect", { method: "POST", json: input }).then((r) => r.body.url);
   }
 
-  prepareDownload(path: string) {
-    return this.call<{ download: PresignedRequest }>("/v1/storage/downloads", { method: "POST", json: { path } }).then(
-      (r) => r.body.download,
+  completeDriveConnection(input: { code: string; codeVerifier: string; redirectUri: string }) {
+    return this.call<{ drive: ConnectedDrive }>("/v1/drives/complete", { method: "POST", json: input }).then((r) => r.body.drive);
+  }
+
+  renameDrive(driveId: string, label: string) {
+    return this.call<{ drive: ConnectedDrive }>(`/v1/drives/${encodeURIComponent(driveId)}`, { method: "PATCH", json: { label } }).then(
+      (r) => r.body.drive,
     );
   }
 
-  async copyStorage(from: string, to: string) {
-    await this.call("/v1/storage/copy", { method: "POST", json: { from, to } });
-  }
-
-  async removeStorage(path: string) {
-    await this.call(`/v1/storage/object?${new URLSearchParams({ path })}`, { method: "DELETE" });
+  async disconnectDrive(driveId: string) {
+    await this.call(`/v1/drives/${encodeURIComponent(driveId)}`, { method: "DELETE" });
   }
 
   /** Sends a signed request straight to the storage provider. */
   async sendSigned(request: PresignedRequest, init: { body?: RequestInit["body"]; range?: { start: number; end: number } } = {}) {
     const headers = new Headers(request.headers);
     if (init.range) headers.set("range", `bytes=${init.range.start}-${init.range.end}`);
-    const body = init.body;
+    return this.fetchSigned(request.url, { method: request.method, headers, ...(init.body !== undefined ? { body: init.body } : {}) });
+  }
+
+  /**
+   * Uploads through a signed request: in one PUT, or piece by piece when the provider asks for
+   * it (OneDrive). Pieces are read from the stream as they are sent, so nothing is held whole.
+   */
+  async uploadSigned(request: PresignedRequest, body: ReadableStream<Uint8Array> | Uint8Array, size: number) {
+    if (!request.chunked || size === 0) return this.sendSigned(request, { body: body as RequestInit["body"] });
+    const max = request.chunked.maxBytes;
+    let start = 0;
+    let response: Response | null = null;
+    for await (const piece of pieces(body, max)) {
+      const headers = new Headers(request.headers);
+      headers.set("content-range", `bytes ${start}-${start + piece.byteLength - 1}/${size}`);
+      response = await this.fetchSigned(request.url, { method: request.method, headers, body: piece as NonNullable<RequestInit["body"]> });
+      start += piece.byteLength;
+    }
+    if (start !== size) throw new CloudApiError("The file changed while it was uploading", 400);
+    return response!;
+  }
+
+  private async fetchSigned(url: string, init: RequestInit) {
     let response: Response;
     try {
-      response = await this.fetchImpl(request.url, {
-        method: request.method,
-        headers,
-        ...(body !== undefined ? { body } : {}),
+      response = await this.fetchImpl(url, {
+        ...init,
         // Node's fetch needs this to send a stream as the body.
-        ...(body instanceof ReadableStream ? ({ duplex: "half" } as RequestInit) : {}),
+        ...(init.body instanceof ReadableStream ? ({ duplex: "half" } as RequestInit) : {}),
       });
     } catch {
       throw new CloudApiError("Can't reach cloud storage. Check your internet connection.", 0);
@@ -232,5 +259,75 @@ export class CloudApi implements CloudCatalogGateway {
 
   async removeUser(userId: string) {
     await this.call("/api/auth/admin/remove-user", { method: "POST", json: { userId } });
+  }
+}
+
+/** Cuts a body into pieces of exactly `max` bytes (the last one shorter). */
+async function* pieces(body: ReadableStream<Uint8Array> | Uint8Array, max: number): AsyncGenerator<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    for (let at = 0; at < body.byteLength; at += max) yield body.subarray(at, Math.min(at + max, body.byteLength));
+    return;
+  }
+  const reader = body.getReader();
+  let buffer = new Uint8Array(max);
+  let filled = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    let offset = 0;
+    while (offset < value.byteLength) {
+      const take = Math.min(max - filled, value.byteLength - offset);
+      buffer.set(value.subarray(offset, offset + take), filled);
+      filled += take;
+      offset += take;
+      if (filled === max) {
+        yield buffer;
+        buffer = new Uint8Array(max);
+        filled = 0;
+      }
+    }
+  }
+  if (filled > 0) yield buffer.subarray(0, filled);
+}
+
+/**
+ * One storage space on the cloud server: Memories Cloud or a connected drive. The server signs
+ * requests; bytes go straight between this computer and the provider.
+ */
+export class CloudStorageClient {
+  constructor(
+    private readonly api: CloudApi,
+    private readonly base: string,
+  ) {}
+
+  list(path: string, recursive = false) {
+    const params = new URLSearchParams({ path });
+    if (recursive) params.set("recursive", "1");
+    return this.api.call<{ entries: CloudEntry[] }>(`${this.base}/list?${params}`).then((r) => r.body.entries);
+  }
+
+  async stat(path: string): Promise<CloudFileStat | null> {
+    try {
+      return (await this.api.call<{ file: CloudFileStat }>(`${this.base}/stat?${new URLSearchParams({ path })}`)).body.file;
+    } catch (error) {
+      if (error instanceof CloudApiError && error.status === 404 && error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  prepareUpload(input: { path: string; size: number; sha256: string; contentType: string }) {
+    return this.api.call<{ upload: PresignedRequest }>(`${this.base}/uploads`, { method: "POST", json: input }).then((r) => r.body.upload);
+  }
+
+  prepareDownload(path: string) {
+    return this.api.call<{ download: PresignedRequest }>(`${this.base}/downloads`, { method: "POST", json: { path } }).then((r) => r.body.download);
+  }
+
+  async copy(from: string, to: string) {
+    await this.api.call(`${this.base}/copy`, { method: "POST", json: { from, to } });
+  }
+
+  async remove(path: string) {
+    await this.api.call(`${this.base}/object?${new URLSearchParams({ path })}`, { method: "DELETE" });
   }
 }

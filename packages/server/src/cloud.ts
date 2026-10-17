@@ -1,4 +1,13 @@
-import type { CloudAdminUser, CloudProvider, CloudRole, CloudStatus, CloudUser, Drive } from "@memories/core";
+import type {
+  CloudAdminUser,
+  CloudDriveProvider,
+  CloudProvider,
+  CloudRole,
+  CloudStatus,
+  CloudUser,
+  ConnectedDrive,
+  Drive,
+} from "@memories/core";
 import { type Context, Hono } from "hono";
 
 /**
@@ -18,6 +27,11 @@ export type CloudControl = {
   setSyncEnabled(enabled: boolean): Promise<void>;
   syncNow(): Promise<void>;
   addStoragePlace(): Promise<Drive>;
+  connectDrive(provider: CloudDriveProvider, redirectUri: string): Promise<{ url: string }>;
+  completeDriveConnection(input: { code?: string; state: string; error?: string }): Promise<ConnectedDrive>;
+  renameDrive(driveId: string, label: string): Promise<ConnectedDrive>;
+  disconnectDrive(driveId: string): Promise<void>;
+  addDrivePlace(driveId: string): Promise<Drive>;
   listUsers(input: { search?: string; limit?: number; offset?: number }): Promise<{ users: CloudAdminUser[]; total: number }>;
   setRole(userId: string, role: CloudRole): Promise<void>;
   banUser(userId: string, reason?: string): Promise<void>;
@@ -27,6 +41,8 @@ export type CloudControl = {
 
 /** The browser lands here after signing in with a provider. Needs no launch token. */
 export const CLOUD_CALLBACK_PATH = "/cloud/callback";
+/** The browser lands here after allowing access to a drive. Needs no launch token either. */
+export const CLOUD_DRIVE_CALLBACK_PATH = "/cloud/drives/callback";
 
 export const LOCAL_ONLY_STATUS: CloudStatus = {
   available: false,
@@ -35,9 +51,12 @@ export const LOCAL_ONLY_STATUS: CloudStatus = {
   user: null,
   sync: { enabled: false, pending: 0, lastSyncedAt: null, error: null, running: false },
   storageDriveId: null,
+  driveProviders: [],
+  drives: [],
 };
 
 const PROVIDERS = new Set<CloudProvider>(["google", "apple", "microsoft", "github", "facebook"]);
+const DRIVE_PROVIDERS = new Set<CloudDriveProvider>(["google-drive", "onedrive"]);
 
 /** Errors from the cloud keep their status (401, 403, 409…); anything else is a bad request. */
 function failure(c: Context, error: unknown) {
@@ -170,6 +189,53 @@ export function cloudRoutes(cloud: CloudControl | undefined, options: { onSigned
   app.post(
     "/cloud/storage",
     run(async (c) => c.json({ drive: await service().addStoragePlace() }, 201)),
+  );
+
+  app.post(
+    "/cloud/drives/connect",
+    run(async (c) => {
+      const { provider } = await json<{ provider?: CloudDriveProvider }>(c);
+      if (!provider || !DRIVE_PROVIDERS.has(provider)) return c.json({ error: "Unknown drive" }, 400);
+      const redirectUri = `${new URL(c.req.url).origin}${CLOUD_DRIVE_CALLBACK_PATH}`;
+      return c.json(await service().connectDrive(provider, redirectUri));
+    }),
+  );
+
+  app.get(CLOUD_DRIVE_CALLBACK_PATH, async (c) => {
+    const state = c.req.query("state");
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+    if (!state) return c.html(callbackPage("Connecting didn't finish", "Go back to Memories and try again."), 400);
+    try {
+      const drive = await service().completeDriveConnection({ state, ...(code ? { code } : {}), ...(error ? { error } : {}) });
+      options.onSignedIn?.();
+      return c.html(callbackPage("Your drive is connected", `${drive.label} is ready. You can close this tab and go back to Memories.`));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Go back to Memories and try again.";
+      return c.html(callbackPage("Connecting your drive didn't work", message), 400);
+    }
+  });
+
+  app.post(
+    "/cloud/drives/:id/place",
+    run(async (c) => c.json({ drive: await service().addDrivePlace(c.req.param("id")!) }, 201)),
+  );
+
+  app.post(
+    "/cloud/drives/:id/rename",
+    run(async (c) => {
+      const { label } = await json<{ label?: string }>(c);
+      if (!label?.trim()) return c.json({ error: "Give it a name" }, 400);
+      return c.json({ drive: await service().renameDrive(c.req.param("id")!, label.trim()) });
+    }),
+  );
+
+  app.post(
+    "/cloud/drives/:id/disconnect",
+    run(async (c) => {
+      await service().disconnectDrive(c.req.param("id")!);
+      return c.json({ ok: true });
+    }),
   );
 
   app.get(

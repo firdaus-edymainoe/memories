@@ -24,6 +24,11 @@ export type PresignedRequest = {
   url: string;
   headers: Record<string, string>;
   expiresAt: string;
+  /**
+   * The provider takes the upload in pieces (OneDrive upload sessions). Send consecutive PUTs of
+   * at most `maxBytes` each, with `content-range: bytes <start>-<end>/<size>`. Absent: one PUT.
+   */
+  chunked?: { maxBytes: number };
 };
 
 export type UploadIntent = {

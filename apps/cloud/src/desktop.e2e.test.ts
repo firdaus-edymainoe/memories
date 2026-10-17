@@ -9,10 +9,11 @@ import {
   runBackupJob,
   saveBackupJob,
 } from "@memories/core";
-import { PostgresCatalogStore, catalogSchema, migrateCatalog } from "@memories/db-postgres";
+import { PostgresCatalogStore, PostgresDriveConnectionStore, catalogSchema, migrateCatalog } from "@memories/db-postgres";
 import { SqliteCatalog } from "@memories/db-sqlite";
 import { NodeFileIO } from "@memories/fs-darwin";
-import { MemoryObjectStorage } from "@memories/storage";
+import { type DriveProvider, type DriveProviderId, GoogleDriveProvider, MemoryObjectStorage, OneDriveProvider } from "@memories/storage";
+import { FakeGoogleDrive, FakeGraph } from "@memories/storage/testing";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { drizzle } from "drizzle-orm/pglite";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -22,7 +23,9 @@ import { describe, expect, it } from "vitest";
 import { createCloudApp } from "./app.js";
 import { createAuth } from "./auth.js";
 import { CloudFiles } from "./cloud-files.js";
+import { DriveConnections } from "./drive-connections.js";
 import { ConsoleMailer } from "./mailer.js";
+import { TokenVault } from "./token-vault.js";
 
 /**
  * The desktop side (`@memories/cloud-link`, SQLite catalog, real files on disk) against the
@@ -44,11 +47,33 @@ async function world() {
     mailer: new ConsoleMailer(() => undefined),
     providers: { google: { clientId: "id", clientSecret: "secret" } },
   });
-  const app = createCloudApp({ auth, catalog: cloudCatalog, files, providers: ["google"] });
+  // People's own drives: a fake Google Drive and a fake OneDrive, with their OAuth servers.
+  const google = new FakeGoogleDrive();
+  const graph = new FakeGraph();
+  const oauth = (body: Record<string, unknown>) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  const providerNetwork: typeof fetch = async (input, init = {}) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.host === "oauth2.googleapis.com" || url.host === "login.microsoftonline.com") {
+      return oauth({ access_token: "token-1", refresh_token: `refresh-${url.host}`, expires_in: 3600 });
+    }
+    if (url.host.endsWith("googleapis.com")) return google.fetch(input, init);
+    return graph.fetch(input, init);
+  };
+  const drives = new DriveConnections({
+    providers: new Map<DriveProviderId, DriveProvider>([
+      ["google-drive", new GoogleDriveProvider({ clientId: "g", clientSecret: "g" }, providerNetwork)],
+      ["onedrive", new OneDriveProvider({ clientId: "m", clientSecret: "m" }, providerNetwork)],
+    ]),
+    store: new PostgresDriveConnectionStore(pg),
+    vault: new TokenVault("test-secret-that-is-long-enough-to-use-123", "drive-connections"),
+    baseURL: SERVER,
+  });
+  const app = createCloudApp({ auth, catalog: cloudCatalog, files, drives, providers: ["google"] });
 
-  /** The network: the cloud server, and signed requests to the storage provider. */
+  /** The network: the cloud server, and signed requests to the storage providers. */
   const network: typeof fetch = async (input, init = {}) => {
     const url = String(input instanceof Request ? input.url : input);
+    if (!url.startsWith(SERVER) && !url.startsWith("memory:")) return providerNetwork(input, init);
     if (url.startsWith("memory:")) {
       const key = decodeURIComponent(url.slice("memory:".length));
       if (init.method === "PUT") {
@@ -94,7 +119,7 @@ async function world() {
     fileIO: new WithCloudFileIO(new NodeFileIO(), new CloudFileIO(cloud)),
     volumes: new WithCloudVolumes(localVolumes, new CloudVolumes(cloud)),
   };
-  return { app, authDb, cloud, cloudCatalog, storage, catalog, ports, local, other, opened, network };
+  return { app, authDb, cloud, cloudCatalog, storage, catalog, ports, local, other, opened, network, google, graph };
 }
 
 describe("desktop app with the cloud", () => {
@@ -167,6 +192,60 @@ describe("desktop app with the cloud", () => {
     await w.cloud.signOut();
     expect(await w.ports.volumes.list()).toHaveLength(1);
     await expect(w.ports.fileIO.list(place.rootPath)).rejects.toThrow(/Sign in/);
+  });
+
+  it("connects the person's own Google Drive and OneDrive and uses them as places", async () => {
+    const w = await world();
+    const drive = await registerDrive(w.ports, { name: "Pictures", kind: "computer", rootPath: w.local });
+    await ingestFolder(w.ports, { driveId: drive.id });
+    await w.cloud.signUp({ name: "Firdaus", email: "firdaus@example.com", password: "correct horse battery" });
+    expect(await w.cloud.status()).toMatchObject({ driveProviders: ["google-drive", "onedrive"], drives: [] });
+
+    /** The browser round trip: the provider sends it to the server, which sends it to the app. */
+    const connect = async (provider: "google-drive" | "onedrive", code: string) => {
+      const redirect = "http://127.0.0.1:47000/cloud/drives/callback";
+      await w.cloud.connectDrive(provider, redirect);
+      const allow = new URL(w.opened.at(-1)!);
+      const fromProvider = await w.app.request(`${SERVER}/drives/callback?code=${code}&state=${encodeURIComponent(allow.searchParams.get("state")!)}`);
+      const back = new URL(fromProvider.headers.get("location")!);
+      expect(back.origin + back.pathname).toBe(redirect);
+      return w.cloud.completeDriveConnection({ code: back.searchParams.get("code")!, state: back.searchParams.get("state")! });
+    };
+    const gdrive = await connect("google-drive", "g-code");
+    const onedrive = await connect("onedrive", "m-code");
+    expect(gdrive.label).toBe("Google Drive (me@gmail.com)");
+    expect(onedrive.label).toBe("OneDrive (me@outlook.com)");
+    expect((await w.cloud.status()).drives.map((d) => d.label)).toEqual([gdrive.label, onedrive.label]);
+    expect((await w.ports.volumes.list()).map((v) => v.label)).toEqual(["Mac", "Memories Cloud", gdrive.label, onedrive.label]);
+
+    const gPlace = await w.cloud.addDrivePlace(gdrive.id);
+    const oPlace = await w.cloud.addDrivePlace(onedrive.id);
+    expect(gPlace).toMatchObject({ kind: "cloud", online: true, name: gdrive.label });
+    expect((await w.cloud.status()).drives.map((d) => d.placeId)).toEqual([gPlace.id, oPlace.id]);
+
+    // Copy up to Google Drive, back up to OneDrive (sent in pieces), the same as any place.
+    const [file] = await w.catalog.listFiles();
+    expect(await copyFileToDrive(w.ports, { fileId: file!.id, destDriveId: gPlace.id })).toMatchObject({ status: "ready" });
+    expect(w.google.paths()).toEqual(["Trip/beach.jpg"]);
+    const job = await saveBackupJob(w.ports, { sourceDriveId: drive.id, destDriveId: oPlace.id, sourceRelativePaths: [""] });
+    expect(await runBackupJob(w.ports, job.id)).toMatchObject({ failed: 0 });
+    expect(w.graph.paths()).toEqual(["Trip/beach.jpg"]);
+
+    // From one drive to the other, and back down to this computer.
+    await w.ports.fileIO.copy({ fromRoot: gPlace.rootPath, fromRelative: "Trip/beach.jpg", toRoot: oPlace.rootPath, toRelative: "From Google/beach.jpg" });
+    expect(w.graph.paths()).toEqual(["From Google/beach.jpg", "Trip/beach.jpg"]);
+    // Work accounts drop the stored checksum; the app hashes the file itself.
+    w.graph.keepDescriptions = false;
+    expect(await w.ports.fileIO.hash(oPlace.rootPath, "From Google/beach.jpg")).toBe(file!.objectHash);
+    const restore = await registerDrive(w.ports, { name: "Restore", kind: "computer", rootPath: w.other });
+    await w.ports.fileIO.copy({ fromRoot: oPlace.rootPath, fromRelative: "Trip/beach.jpg", toRoot: restore.rootPath, toRelative: "beach.jpg" });
+    expect(await readFile(join(w.other, "beach.jpg"), "utf8")).toBe("sunny beach bytes");
+
+    // Disconnecting takes the place offline and leaves the files where they are.
+    await w.cloud.disconnectDrive(onedrive.id);
+    expect((await w.ports.volumes.list()).map((v) => v.label)).toEqual(["Mac", "Memories Cloud", gdrive.label]);
+    await expect(w.ports.fileIO.list(oPlace.rootPath)).rejects.toThrow(/isn't connected/);
+    expect(w.graph.paths()).toHaveLength(2);
   });
 
   it("signs in with a provider through the system browser", async () => {
