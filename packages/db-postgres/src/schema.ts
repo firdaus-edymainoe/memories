@@ -130,3 +130,22 @@ export const backupJobs = pgTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.deviceId, table.id] })],
 );
+
+/** Drives people connect from their own Google or Microsoft account. Tokens are sealed by the server. */
+export const driveConnections = pgTable(
+  "drive_connections",
+  {
+    userId: text("user_id").notNull(),
+    id: text("id").notNull(),
+    provider: text("provider").notNull(),
+    accountId: text("account_id").notNull(),
+    label: text("label").notNull(),
+    email: text("email"),
+    status: text("status").notNull(),
+    rootId: text("root_id").notNull(),
+    sealedTokens: text("sealed_tokens").notNull(),
+    connectedAt: timestamp("connected_at", { withTimezone: true, mode: "string" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.id] })],
+);

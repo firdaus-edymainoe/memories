@@ -95,6 +95,24 @@ const MIGRATIONS: readonly string[] = [
     ${ownedBy}
   );
   `,
+  // 2: personal drives people connect (Google Drive, OneDrive). Several per person.
+  `
+  CREATE TABLE drive_connections (
+    user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    email TEXT,
+    status TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    sealed_tokens TEXT NOT NULL,
+    connected_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, id),
+    UNIQUE (user_id, provider, account_id)
+  );
+  `,
 ];
 
 /**

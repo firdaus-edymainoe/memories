@@ -57,6 +57,25 @@ export type CloudSyncState = {
   running: boolean;
 };
 
+/** Personal drives a person can bring: their own Google Drive or OneDrive subscription. */
+export type CloudDriveProvider = "google-drive" | "onedrive";
+
+/**
+ * One of the person's own drives, connected to their account. Someone can connect several,
+ * even two of the same kind (a personal and a work OneDrive). Memories keeps its files in its
+ * own folder there.
+ */
+export type ConnectedDrive = {
+  id: string;
+  provider: CloudDriveProvider;
+  /** What the app calls it, e.g. "Google Drive (me@gmail.com)". */
+  label: string;
+  email: string | null;
+  /** `reconnect`: the provider stopped accepting our access; the person has to connect it again. */
+  status: "connected" | "reconnect";
+  connectedAt: string;
+};
+
 export type CloudStatus = {
   /** A cloud server is configured for this app. When false, cloud mode is not offered. */
   available: boolean;
@@ -66,6 +85,10 @@ export type CloudStatus = {
   sync: CloudSyncState;
   /** The cloud storage place, once the person has added it. */
   storageDriveId: string | null;
+  /** Personal drives the server can connect. */
+  driveProviders: CloudDriveProvider[];
+  /** The person's own drives, each with its place once added. */
+  drives: Array<ConnectedDrive & { placeId: string | null }>;
 };
 
 /** One catalog row as it is now, or `data: null` when it was deleted. */
@@ -146,6 +169,30 @@ export type CloudCatalogStore = {
   snapshot(userId: string, deviceId: string): Promise<SyncRecord[]>;
   removeDevice(userId: string, deviceId: string): Promise<void>;
   /** Drops every device and catalog of a person (their account was deleted). */
+  removeUser(userId: string): Promise<void>;
+};
+
+/**
+ * A connected drive as the cloud server keeps it. `sealedTokens` is encrypted by the server; the
+ * store never sees the tokens in the clear.
+ */
+export type DriveConnectionRecord = ConnectedDrive & {
+  userId: string;
+  /** The provider's id for the account, so connecting the same drive twice updates it. */
+  accountId: string;
+  /** The app's folder in that drive. */
+  rootId: string;
+  sealedTokens: string;
+};
+
+/** Where the cloud server keeps everyone's connected drives. */
+export type DriveConnectionStore = {
+  list(userId: string): Promise<DriveConnectionRecord[]>;
+  get(userId: string, id: string): Promise<DriveConnectionRecord | null>;
+  findByAccount(userId: string, provider: CloudDriveProvider, accountId: string): Promise<DriveConnectionRecord | null>;
+  /** Adds the connection, or replaces the one with the same user and id. */
+  save(record: DriveConnectionRecord): Promise<void>;
+  remove(userId: string, id: string): Promise<void>;
   removeUser(userId: string): Promise<void>;
 };
 

@@ -35,9 +35,9 @@ import {
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
-import { CLOUD_CALLBACK_PATH, type CloudControl, cloudRoutes } from "./cloud.js";
+import { CLOUD_CALLBACK_PATH, CLOUD_DRIVE_CALLBACK_PATH, type CloudControl, cloudRoutes } from "./cloud.js";
 
-export { CLOUD_CALLBACK_PATH, type CloudControl, LOCAL_ONLY_STATUS } from "./cloud.js";
+export { CLOUD_CALLBACK_PATH, CLOUD_DRIVE_CALLBACK_PATH, type CloudControl, LOCAL_ONLY_STATUS } from "./cloud.js";
 
 /** Header carrying the per-launch secret (see `@memories/client`). */
 export const TOKEN_HEADER = "x-memories-token";
@@ -173,9 +173,10 @@ export function createApp(ports: Ports, options: AppOptions = {}) {
   if (options.token) {
     const token = options.token;
     app.use("*", async (c, next) => {
-      // The sign-in callback comes from the system browser, which has no token. It is protected
-      // by the one-time state and PKCE verifier of a sign-in this app started.
-      if (c.req.method === "OPTIONS" || c.req.path === "/health" || c.req.path === CLOUD_CALLBACK_PATH) return next();
+      // The sign-in and drive callbacks come from the system browser, which has no token. They are
+      // protected by the one-time state and PKCE verifier of a flow this app started.
+      const browserCallback = c.req.path === CLOUD_CALLBACK_PATH || c.req.path === CLOUD_DRIVE_CALLBACK_PATH;
+      if (c.req.method === "OPTIONS" || c.req.path === "/health" || browserCallback) return next();
       const provided = c.req.header(TOKEN_HEADER) ?? c.req.query("token");
       if (!sameSecret(provided, token)) return c.json({ error: "Unauthorized" }, 401);
       await next();

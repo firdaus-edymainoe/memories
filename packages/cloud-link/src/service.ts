@@ -1,10 +1,12 @@
 import {
   type CatalogChangeFeed,
   type CloudAdminUser,
+  type CloudDriveProvider,
   type CloudProvider,
   type CloudRole,
   type CloudStatus,
   type CloudUser,
+  type ConnectedDrive,
   type Drive,
   type DriveKind,
   syncCatalog,
@@ -34,6 +36,7 @@ export type CloudServiceOptions = {
 };
 
 type PendingSignIn = { state: string; verifier: string; redirectUri: string; expiresAt: number };
+type PendingDrive = PendingSignIn & { provider: CloudDriveProvider };
 
 const SIGN_IN_WINDOW_MS = 10 * 60 * 1000;
 export const CLOUD_PLACE_NAME = "Memories Cloud";
@@ -59,6 +62,8 @@ export class CloudService implements CloudConnection {
   private syncing: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private providers: CloudProvider[] | null = null;
+  private driveProviders: CloudDriveProvider[] | null = null;
+  private pendingDrive: PendingDrive | null = null;
   private readonly now: () => Date;
 
   constructor(private readonly options: CloudServiceOptions) {
@@ -71,6 +76,8 @@ export class CloudService implements CloudConnection {
   /** Loads what was saved last time. Call once before anything else. */
   async load() {
     this.state = await this.options.store.load();
+    // Catch up on drives connected or removed from another computer. Offline is fine.
+    void this.refreshDrives().catch(() => undefined);
     return this;
   }
 
@@ -91,14 +98,15 @@ export class CloudService implements CloudConnection {
 
   current() {
     const session = this.state?.session;
-    return session && this.api ? { user: session.user, api: this.api } : null;
+    return session && this.api ? { user: session.user, api: this.api, drives: this.state?.drives ?? [] } : null;
   }
 
   async status(): Promise<CloudStatus> {
     const state = this.loaded;
     const user = state.session?.user ?? null;
     const root = user ? cloudRoot(user.id) : null;
-    const storage = root ? (await this.options.places.list()).find((drive) => drive.rootPath === root) : undefined;
+    const places = user ? await this.options.places.list() : [];
+    const storage = root ? places.find((drive) => drive.rootPath === root) : undefined;
     return {
       available: this.api !== null,
       serverUrl: this.api?.serverUrl ?? null,
@@ -112,19 +120,36 @@ export class CloudService implements CloudConnection {
         running: this.syncing !== null,
       },
       storageDriveId: storage?.id ?? null,
+      driveProviders: user ? await this.availableDriveProviders() : [],
+      drives: user
+        ? state.drives.map((drive) => ({
+            ...drive,
+            placeId: places.find((place) => place.rootPath === cloudRoot(user.id, drive.id))?.id ?? null,
+          }))
+        : [],
     };
   }
 
   private async availableProviders() {
     if (!this.api) return [];
-    if (!this.providers) {
-      try {
-        this.providers = (await this.api.config()).providers;
-      } catch {
-        return []; // Offline: try again next time.
-      }
+    if (!this.providers) await this.loadConfig();
+    return this.providers ?? [];
+  }
+
+  private async availableDriveProviders() {
+    if (!this.api) return [];
+    if (!this.driveProviders) await this.loadConfig();
+    return this.driveProviders ?? [];
+  }
+
+  private async loadConfig() {
+    try {
+      const config = await this.requireApi().config();
+      this.providers = config.providers;
+      this.driveProviders = config.drives ?? [];
+    } catch {
+      // Offline: try again next time.
     }
-    return this.providers;
   }
 
   // Signing in and out
@@ -172,10 +197,11 @@ export class CloudService implements CloudConnection {
 
   private async startSession(session: { token: string; user: CloudUser }) {
     const previous = this.loaded.session?.user.id;
-    await this.update({ session, lastError: null });
+    await this.update({ session, lastError: null, ...(previous !== session.user.id ? { drives: [] } : {}) });
     // Another account's catalog must not leak into this one: start the sync over.
     if (previous && previous !== session.user.id && this.loaded.syncEnabled) await this.options.changes.start();
     await this.registerDevice().catch(() => undefined);
+    await this.refreshDrives().catch(() => undefined);
     return session.user;
   }
 
@@ -185,7 +211,7 @@ export class CloudService implements CloudConnection {
 
   async signOut() {
     if (this.api && this.loaded.session) await this.api.signOut().catch(() => undefined);
-    await this.update({ session: null, lastError: null });
+    await this.update({ session: null, lastError: null, drives: [] });
   }
 
   async forgotPassword(email: string) {
@@ -203,6 +229,7 @@ export class CloudService implements CloudConnection {
     try {
       const user = await this.api.me();
       await this.update({ session: { ...this.loaded.session, user } });
+      await this.refreshDrives().catch(() => undefined);
       return user;
     } catch (error) {
       if (error instanceof CloudApiError && error.status === 401) await this.update({ session: null });
@@ -278,6 +305,77 @@ export class CloudService implements CloudConnection {
       kind: "cloud",
       rootPath: cloudRoot(user.id),
       volumeId: cloudVolumeId(user.id),
+    });
+  }
+
+  // The person's own drives (Google Drive, OneDrive). Several of each are fine.
+
+  /** Asks the server for the connected drives again (after one changed, or at launch). */
+  async refreshDrives() {
+    if (!this.api || !this.loaded.session) return [];
+    const { providers, drives } = await this.api.listDrives();
+    this.driveProviders = providers;
+    await this.update({ drives });
+    return drives;
+  }
+
+  /**
+   * Opens the system browser so the person can let Memories use one of their drives. The browser
+   * comes back to `redirectUri` (this app's `/cloud/drives/callback`) for `completeDriveConnection`.
+   */
+  async connectDrive(provider: CloudDriveProvider, redirectUri: string) {
+    const api = this.requireApi();
+    if (!this.loaded.session) throw new Error("Sign in to Memories Cloud first");
+    if (!(await this.availableDriveProviders()).includes(provider)) throw new Error("Connecting that drive isn't set up");
+    const verifier = random();
+    this.pendingDrive = { provider, state: random(), verifier, redirectUri, expiresAt: this.now().getTime() + SIGN_IN_WINDOW_MS };
+    const url = await api.startDriveConnection({
+      provider,
+      redirectUri,
+      state: this.pendingDrive.state,
+      codeChallenge: createHash("sha256").update(verifier).digest("base64url"),
+    });
+    await this.options.openExternal(url);
+    return { url };
+  }
+
+  async completeDriveConnection(input: { code?: string; state: string; error?: string }) {
+    const pending = this.pendingDrive;
+    if (!pending || !same(pending.state, input.state) || pending.expiresAt < this.now().getTime()) {
+      throw new Error("This wasn't started here, or it took too long. Try again from Memories.");
+    }
+    this.pendingDrive = null;
+    if (input.error || !input.code) {
+      throw new Error(input.error === "access_denied" ? "You didn't allow Memories to use that drive." : "Connecting the drive didn't work. Try again.");
+    }
+    const drive = await this.requireApi().completeDriveConnection({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri });
+    await this.refreshDrives().catch(() => this.update({ drives: [...this.loaded.drives.filter((d) => d.id !== drive.id), drive] }));
+    return drive;
+  }
+
+  async renameDrive(driveId: string, label: string) {
+    const drive = await this.requireApi().renameDrive(driveId, label);
+    await this.update({ drives: this.loaded.drives.map((each) => (each.id === driveId ? drive : each)) });
+    return drive;
+  }
+
+  /** Stops using the drive. Its files stay in the person's drive; its place goes offline. */
+  async disconnectDrive(driveId: string) {
+    await this.requireApi().disconnectDrive(driveId);
+    await this.update({ drives: this.loaded.drives.filter((each) => each.id !== driveId) });
+  }
+
+  /** Adds a connected drive as a place (once; later calls return the same one). */
+  async addDrivePlace(driveId: string): Promise<Drive> {
+    const user = this.loaded.session?.user;
+    if (!user) throw new Error("Sign in to Memories Cloud first");
+    const drive = this.loaded.drives.find((each: ConnectedDrive) => each.id === driveId);
+    if (!drive) throw new Error("That drive isn't connected to your account");
+    return this.options.places.register({
+      name: drive.label,
+      kind: "cloud",
+      rootPath: cloudRoot(user.id, drive.id),
+      volumeId: cloudVolumeId(user.id, drive.id),
     });
   }
 

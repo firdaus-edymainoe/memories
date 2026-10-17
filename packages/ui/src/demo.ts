@@ -3,9 +3,11 @@ import type {
   BackupJob,
   BackupRun,
   CloudAdminUser,
+  CloudDriveProvider,
   CloudRole,
   CloudStatus,
   CloudUser,
+  ConnectedDrive,
   DirEntry,
   Drive,
   EventCluster,
@@ -163,6 +165,7 @@ export function demoClient(): MemoriesClient {
   let cloudUser: CloudUser | null = null;
   let syncOn = false;
   let syncedAt: string | null = null;
+  let ownDrives: ConnectedDrive[] = [];
   let people: CloudAdminUser[] = [
     { id: "p1", email: "aisha@example.com", name: "Aisha", role: "user", emailVerified: true, image: null, banned: false, banReason: null, createdAt: "2026-05-01T09:00:00Z" },
     { id: "p2", email: "adam@example.com", name: "Adam", role: "user", emailVerified: false, image: null, banned: false, banReason: null, createdAt: "2026-06-12T09:00:00Z" },
@@ -178,7 +181,9 @@ export function demoClient(): MemoriesClient {
     providers: ["google", "apple", "microsoft", "github"],
     user: cloudUser,
     sync: { enabled: syncOn, pending: 0, lastSyncedAt: syncedAt, error: null, running: false },
-    storageDriveId: drives.find((d) => d.kind === "cloud")?.id ?? null,
+    storageDriveId: drives.find((d) => d.rootPath === "cloud://me")?.id ?? null,
+    driveProviders: ["google-drive", "onedrive"],
+    drives: ownDrives.map((drive) => ({ ...drive, placeId: drives.find((d) => d.rootPath === `cloud://me/drives/${drive.id}`)?.id ?? null })),
   });
   const updatePerson = (id: string, change: Partial<CloudAdminUser>) => {
     people = people.map((p) => (p.id === id ? { ...p, ...change } : p));
@@ -211,6 +216,33 @@ export function demoClient(): MemoriesClient {
       const drive: Drive = { id: "cloud", name: "Memories Cloud", kind: "cloud", rootPath: "cloud://me", volumeId: "cloud:me", online: true };
       if (!drives.some((d) => d.id === drive.id)) drives.push(drive);
       return drive;
+    },
+    cloudConnectDrive: async (provider: CloudDriveProvider) => {
+      // Pretend the person allowed access in their browser.
+      window.setTimeout(() => {
+        const n = ownDrives.filter((d) => d.provider === provider).length + 1;
+        const email = provider === "google-drive" ? (n === 1 ? "firdaus@gmail.com" : `firdaus.${n}@gmail.com`) : n === 1 ? "firdaus@outlook.com" : `firdaus@work${n}.example`;
+        const label = `${provider === "google-drive" ? "Google Drive" : "OneDrive"} (${email})`;
+        ownDrives = [...ownDrives, { id: `own${ownDrives.length + 1}`, provider, label, email, status: "connected", connectedAt: new Date().toISOString() }];
+      }, 1500);
+      return { url: "" };
+    },
+    cloudAddDrivePlace: async (driveId: string) => {
+      const own = ownDrives.find((d) => d.id === driveId)!;
+      const rootPath = `cloud://me/drives/${driveId}`;
+      const existing = drives.find((d) => d.rootPath === rootPath);
+      if (existing) return existing;
+      const drive: Drive = { id: `cloud-${driveId}`, name: own.label, kind: "cloud", rootPath, volumeId: `cloud:me/drives/${driveId}`, online: true };
+      drives.push(drive);
+      return drive;
+    },
+    cloudRenameDrive: async (driveId: string, label: string) => {
+      ownDrives = ownDrives.map((d) => (d.id === driveId ? { ...d, label } : d));
+      return ownDrives.find((d) => d.id === driveId)!;
+    },
+    cloudDisconnectDrive: async (driveId: string) => {
+      ownDrives = ownDrives.filter((d) => d.id !== driveId);
+      return { ok: true };
     },
     cloudUsers: async (search = "") => {
       const q = search.toLowerCase();

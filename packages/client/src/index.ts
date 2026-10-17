@@ -2,10 +2,12 @@ import type {
   BackupJob,
   BackupRun,
   CloudAdminUser,
+  CloudDriveProvider,
   CloudProvider,
   CloudRole,
   CloudStatus,
   CloudUser,
+  ConnectedDrive,
   DeleteResult,
   ExportResult,
   DirEntry,
@@ -313,6 +315,24 @@ export class MemoriesClient {
   /** Adds cloud storage as a place. */
   cloudAddStorage() {
     return this.post<{ drive: Drive }>("/cloud/storage").then((b) => b.drive);
+  }
+
+  /** Opens the browser so the person can connect one of their own drives (Google Drive, OneDrive). */
+  cloudConnectDrive(provider: CloudDriveProvider) {
+    return this.post<{ url: string }>("/cloud/drives/connect", { provider });
+  }
+
+  /** Adds a connected drive as a place. */
+  cloudAddDrivePlace(driveId: string) {
+    return this.post<{ drive: Drive }>(`/cloud/drives/${encodeURIComponent(driveId)}/place`).then((b) => b.drive);
+  }
+
+  cloudRenameDrive(driveId: string, label: string) {
+    return this.post<{ drive: ConnectedDrive }>(`/cloud/drives/${encodeURIComponent(driveId)}/rename`, { label }).then((b) => b.drive);
+  }
+
+  cloudDisconnectDrive(driveId: string) {
+    return this.post<{ ok: boolean }>(`/cloud/drives/${encodeURIComponent(driveId)}/disconnect`);
   }
 
   cloudUsers(search = "") {

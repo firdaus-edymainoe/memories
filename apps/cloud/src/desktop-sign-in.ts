@@ -15,8 +15,8 @@ import * as z from "zod";
 const CODE_TTL_MS = 5 * 60 * 1000;
 const PREFIX = "desktop-sign-in:";
 
-/** The app listens on loopback only, on a port it picks at launch. */
-export function isDesktopRedirect(value: string) {
+/** The app listens on loopback only, on a port it picks at launch. `path` is its callback. */
+export function isDesktopRedirect(value: string, path = "/cloud/callback") {
   let url: URL;
   try {
     url = new URL(value);
@@ -29,7 +29,7 @@ export function isDesktopRedirect(value: string) {
     url.port !== "" &&
     !url.username &&
     !url.password &&
-    url.pathname === "/cloud/callback" &&
+    url.pathname === path &&
     !url.hash
   );
 }
@@ -44,7 +44,7 @@ function sameText(a: string, b: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-const redirectUri = z.string().max(200).refine(isDesktopRedirect, "redirect_uri must be the app's loopback callback");
+const redirectUri = z.string().max(200).refine((value) => isDesktopRedirect(value), "redirect_uri must be the app's loopback callback");
 const state = z.string().min(16).max(200);
 const challenge = z.string().regex(/^[A-Za-z0-9_-]{43}$/, "code_challenge must be an S256 challenge");
 
