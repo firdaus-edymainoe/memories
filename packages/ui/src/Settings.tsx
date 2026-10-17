@@ -1,4 +1,6 @@
+import type { MemoriesClient } from "@memories/client";
 import { motion } from "motion/react";
+import { CloudSettings } from "./Cloud.js";
 import { Icon } from "./icons.js";
 import type { ThemePref } from "./theme.js";
 
@@ -9,11 +11,15 @@ const THEMES: { value: ThemePref; label: string; hint: string }[] = [
 ];
 
 export function Settings({
+  client,
   theme,
   onTheme,
+  onPlacesChanged,
 }: {
+  client: MemoriesClient;
   theme: ThemePref;
   onTheme: (theme: ThemePref, origin: { x: number; y: number }) => void;
+  onPlacesChanged: () => void;
 }) {
   return (
     <div className="pad settings">
@@ -56,15 +62,7 @@ export function Settings({
         </div>
       </section>
 
-      <section className="setting">
-        <h2>Your privacy</h2>
-        <div className="setting-row">
-          <div>
-            <strong>Everything stays on this computer</strong>
-            <span>No account, nothing uploaded. Memories only keeps a list of what’s in your places.</span>
-          </div>
-        </div>
-      </section>
+      <CloudSettings client={client} onPlacesChanged={onPlacesChanged} />
     </div>
   );
 }

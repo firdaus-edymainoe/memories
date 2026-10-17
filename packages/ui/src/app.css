@@ -1553,6 +1553,19 @@ button.insp-preview:active { transform: scale(0.98); }
 .setting-row > div { display: flex; flex-direction: column; flex: 1; min-width: 220px; }
 .setting-row span { color: var(--mute); font-size: 14px; }
 
+/* cloud (optional account) */
+.setting.cloud .setting-row + .setting-row, .people-list .setting-row + .setting-row { margin-top: 10px; }
+.setting-row strong .chip { margin-left: 6px; vertical-align: 2px; font-style: normal; }
+.cloud-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cloud-actions > span { color: var(--ink-2); font-size: 14px; }
+.cloud-form form, .cloud-form > div { width: 100%; max-width: 420px; }
+.cloud-form .cloud-actions { margin-top: 16px; }
+.cloud-providers { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.cloud-notice { margin: 12px 0 0; color: var(--mute); font-size: 14px; max-width: 680px; }
+.setting .signin-error { max-width: 680px; }
+.people-search { max-width: 420px; margin: 0 0 14px; }
+.people-list { list-style: none; margin: 0; padding: 0; }
+
 /* welcome */
 .welcome-bg { z-index: 70; backdrop-filter: blur(10px) saturate(1.1); }
 .welcome {

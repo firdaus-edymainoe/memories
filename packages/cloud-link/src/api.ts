@@ -1,11 +1,12 @@
-import type {
-  CloudAdminUser,
-  CloudCatalogGateway,
-  CloudDevice,
-  CloudProvider,
-  CloudRole,
-  CloudUser,
-  SyncBatch,
+import {
+  type CloudAdminUser,
+  type CloudCatalogGateway,
+  type CloudDevice,
+  type CloudProvider,
+  type CloudRole,
+  type CloudUser,
+  type SyncBatch,
+  cloudUserFrom,
 } from "@memories/core";
 
 /** A failed call to the cloud server. `status` 0 means it could not be reached. */
@@ -35,17 +36,6 @@ type AuthUser = {
   banReason?: string | null;
   createdAt?: string;
 };
-
-export function toCloudUser(user: AuthUser): CloudUser {
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: (user.role === "admin" ? "admin" : "user") satisfies CloudRole,
-    emailVerified: Boolean(user.emailVerified),
-    image: user.image ?? null,
-  };
-}
 
 /**
  * HTTP client for the Memories cloud server (`apps/cloud`). Runs in the desktop app's main
@@ -95,7 +85,7 @@ export class CloudApi implements CloudCatalogGateway {
     const { body, response } = await this.call<{ token?: string; user: AuthUser }>(path, { method: "POST", json });
     const token = response.headers.get("set-auth-token") ?? body.token;
     if (!token) throw new CloudApiError("The server did not start a session", 500);
-    return { token, user: toCloudUser(body.user) };
+    return { token, user: cloudUserFrom(body.user) };
   }
 
   signUp(input: { name: string; email: string; password: string; callbackURL?: string }) {
@@ -111,7 +101,7 @@ export class CloudApi implements CloudCatalogGateway {
     return this.call<{ token: string; user: AuthUser }>("/api/auth/desktop/token", {
       method: "POST",
       json: { code: input.code, code_verifier: input.codeVerifier, redirect_uri: input.redirectUri },
-    }).then((r) => ({ token: r.body.token, user: toCloudUser(r.body.user) }));
+    }).then((r) => ({ token: r.body.token, user: cloudUserFrom(r.body.user) }));
   }
 
   /** Where the system browser goes to sign in with a provider. */
@@ -220,7 +210,7 @@ export class CloudApi implements CloudCatalogGateway {
     }
     const { body } = await this.call<{ users: AuthUser[]; total: number }>(`/api/auth/admin/list-users?${params}`);
     const users: CloudAdminUser[] = body.users.map((user) => ({
-      ...toCloudUser(user),
+      ...cloudUserFrom(user),
       banned: Boolean(user.banned),
       banReason: user.banReason ?? null,
       createdAt: new Date(user.createdAt ?? 0).toISOString(),

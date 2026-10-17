@@ -912,7 +912,8 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
         lens={browseLens}
         selected={browseFile?.relativePath ?? null}
         picking={!!pickerVolume}
-        thumbUrl={browseDrive && browseDrive.kind !== "phone" ? (entry) => client.driveThumbUrl(browseDrive.id, entry.relativePath) : null}
+        // Phones and cloud storage would send every original over the wire just to draw a tile.
+        thumbUrl={browseDrive && browseDrive.kind !== "phone" && browseDrive.kind !== "cloud" ? (entry) => client.driveThumbUrl(browseDrive.id, entry.relativePath) : null}
         onEnter={(entry) => (pickerVolume ? void loadPicker(pickerVolume, entry.relativePath) : browseDrive && void loadBrowse(browseDrive, entry.relativePath))}
         onSelect={(entry) => {
           if (!browseDrive) return;
@@ -984,6 +985,8 @@ export function MemoriesApp({ client }: { client: MemoriesClient }) {
   } else {
     main = (
       <Settings
+        client={client}
+        onPlacesChanged={() => void refresh()}
         theme={themePref}
         onTheme={(next, origin) => {
           setThemePref(next);

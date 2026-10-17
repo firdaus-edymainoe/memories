@@ -1,5 +1,17 @@
 import type { MemoriesClient } from "@memories/client";
-import type { BackupJob, BackupRun, DirEntry, Drive, EventCluster, FileKind, LibraryFile } from "@memories/core";
+import type {
+  BackupJob,
+  BackupRun,
+  CloudAdminUser,
+  CloudRole,
+  CloudStatus,
+  CloudUser,
+  DirEntry,
+  Drive,
+  EventCluster,
+  FileKind,
+  LibraryFile,
+} from "@memories/core";
 
 const IMG = [
   "photo-1519741497674-611481863552",
@@ -147,7 +159,71 @@ const trashed = new Map<string, string>();
 
 export function demoClient(): MemoriesClient {
   const byName = new Map(files.map((f) => [f.name, f.id]));
+  // A pretend cloud account, so the preview can show cloud mode. Signing in makes you an admin.
+  let cloudUser: CloudUser | null = null;
+  let syncOn = false;
+  let syncedAt: string | null = null;
+  let people: CloudAdminUser[] = [
+    { id: "p1", email: "aisha@example.com", name: "Aisha", role: "user", emailVerified: true, image: null, banned: false, banReason: null, createdAt: "2026-05-01T09:00:00Z" },
+    { id: "p2", email: "adam@example.com", name: "Adam", role: "user", emailVerified: false, image: null, banned: false, banReason: null, createdAt: "2026-06-12T09:00:00Z" },
+  ];
+  const signIn = (email: string, name = "Firdaus") => {
+    cloudUser = { id: "me", email, name, role: "admin", emailVerified: true, image: null };
+    if (!people.some((p) => p.id === "me")) people = [{ ...cloudUser, banned: false, banReason: null, createdAt: new Date().toISOString() }, ...people];
+    return cloudUser;
+  };
+  const cloudStatus = (): CloudStatus => ({
+    available: true,
+    serverUrl: "https://cloud.example",
+    providers: ["google", "apple", "microsoft", "github"],
+    user: cloudUser,
+    sync: { enabled: syncOn, pending: 0, lastSyncedAt: syncedAt, error: null, running: false },
+    storageDriveId: drives.find((d) => d.kind === "cloud")?.id ?? null,
+  });
+  const updatePerson = (id: string, change: Partial<CloudAdminUser>) => {
+    people = people.map((p) => (p.id === id ? { ...p, ...change } : p));
+    return { ok: true };
+  };
+
   return {
+    cloudStatus: async () => cloudStatus(),
+    cloudSignIn: async (input: { email: string }) => (await wait(500), signIn(input.email)),
+    cloudSignUp: async (input: { email: string; name: string }) => (await wait(500), signIn(input.email, input.name)),
+    cloudSignInWith: async () => {
+      window.setTimeout(() => signIn("firdaus@example.com"), 1500);
+      return { url: "" };
+    },
+    cloudSignOut: async () => {
+      cloudUser = null;
+      return { ok: true };
+    },
+    cloudForgotPassword: async () => ({ ok: true }),
+    cloudResendVerification: async () => ({ ok: true }),
+    cloudRefresh: async () => cloudUser,
+    cloudSetSync: async (enabled: boolean) => {
+      await wait(400);
+      syncOn = enabled;
+      syncedAt = enabled ? new Date().toISOString() : syncedAt;
+      return cloudStatus();
+    },
+    cloudSyncNow: async () => (await wait(600), (syncedAt = new Date().toISOString()), cloudStatus()),
+    cloudAddStorage: async () => {
+      const drive: Drive = { id: "cloud", name: "Memories Cloud", kind: "cloud", rootPath: "cloud://me", volumeId: "cloud:me", online: true };
+      if (!drives.some((d) => d.id === drive.id)) drives.push(drive);
+      return drive;
+    },
+    cloudUsers: async (search = "") => {
+      const q = search.toLowerCase();
+      const users = people.filter((p) => !q || p.email.includes(q) || p.name.toLowerCase().includes(q));
+      return { users, total: users.length };
+    },
+    cloudSetRole: async (id: string, role: CloudRole) => updatePerson(id, { role }),
+    cloudBan: async (id: string) => updatePerson(id, { banned: true }),
+    cloudUnban: async (id: string) => updatePerson(id, { banned: false }),
+    cloudRemoveUser: async (id: string) => {
+      people = people.filter((p) => p.id !== id);
+      return { ok: true };
+    },
     mediaUrl: (id: string) => imageFor.get(id) ?? "",
     thumbUrl: (id: string) => imageFor.get(id) ?? "",
     driveMediaUrl: (_drive: string, path: string) => imageFor.get(byName.get(path.split("/").pop() ?? "") ?? "") ?? "",

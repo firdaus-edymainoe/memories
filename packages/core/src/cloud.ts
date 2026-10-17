@@ -18,6 +18,25 @@ export type CloudUser = {
   image: string | null;
 };
 
+/** The account fields Better Auth returns, as Memories shows them. Unknown roles count as `user`. */
+export function cloudUserFrom(user: {
+  id: string;
+  email: string;
+  name: string;
+  role?: string | null;
+  emailVerified?: boolean | null;
+  image?: string | null;
+}): CloudUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role === "admin" ? "admin" : "user",
+    emailVerified: Boolean(user.emailVerified),
+    image: user.image ?? null,
+  };
+}
+
 /** A person as an admin sees them. */
 export type CloudAdminUser = CloudUser & {
   banned: boolean;

@@ -1,4 +1,4 @@
-import type { CloudCatalogStore, CloudProvider, CloudRole, CloudUser } from "@memories/core";
+import { type CloudCatalogStore, type CloudProvider, cloudUserFrom } from "@memories/core";
 import { InvalidKeyError, ObjectExistsError, ObjectNotFoundError } from "@memories/storage";
 import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -27,17 +27,6 @@ type SessionUser = {
 };
 
 type Env = { Variables: { user: SessionUser } };
-
-export function toCloudUser(user: SessionUser): CloudUser {
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: (user.role === "admin" ? "admin" : "user") satisfies CloudRole,
-    emailVerified: user.emailVerified,
-    image: user.image ?? null,
-  };
-}
 
 const deviceBody = z.object({ name: z.string().min(1).max(200), platform: z.string().min(1).max(50) });
 const uploadBody = z.object({
@@ -125,7 +114,7 @@ export function createCloudApp({ auth, catalog, files, providers }: CloudAppOpti
     await next();
   });
 
-  app.get("/v1/me", (c) => c.json({ user: toCloudUser(c.get("user")) }));
+  app.get("/v1/me", (c) => c.json({ user: cloudUserFrom(c.get("user")) }));
 
   app.get("/v1/devices", async (c) => c.json({ devices: await catalog.listDevices(c.get("user").id) }));
 

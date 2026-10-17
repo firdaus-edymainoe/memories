@@ -188,6 +188,7 @@ export function pathLeaf(path: string) {
 }
 
 export function placeWhere(drive: Drive) {
+  if (drive.kind === "cloud") return "Cloud storage";
   if (drive.kind === "phone") {
     const folder = drive.rootPath.replace(/^(mtp|adb):\/\/[^/]+\/?/, "");
     return folder ? `${pathLeaf(folder)} folder` : "Whole phone";
@@ -201,9 +202,14 @@ export const PLACE_KIND: Record<Drive["kind"], { label: string; hint: string }> 
   disk: { label: "External drive", hint: "A hard drive or SSD you plug in" },
   usb: { label: "USB stick", hint: "A small memory stick" },
   phone: { label: "Android phone", hint: "Photos and files on your phone" },
+  cloud: { label: "Memories Cloud", hint: "Your cloud storage, once you sign in" },
 };
 
+/** Places someone adds by picking a folder. Cloud storage is added from Settings instead. */
+export const ADDABLE_KINDS = ["computer", "disk", "usb", "phone"] as const satisfies ReadonlyArray<Drive["kind"]>;
+
 export function placeStatus(drive: Drive) {
+  if (drive.kind === "cloud") return drive.online ? "Signed in" : "Sign in to use";
   if (drive.online) return drive.kind === "computer" ? "Ready" : "Plugged in";
   return drive.kind === "computer" ? "Can’t find this folder" : "Unplugged";
 }

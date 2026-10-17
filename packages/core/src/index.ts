@@ -66,6 +66,7 @@ export { exportFiles, type ExportResult } from "./export.js";
 export { BackupScheduler } from "./scheduler.js";
 export {
   SYNC_ENTITIES,
+  cloudUserFrom,
   syncCatalog,
   syncKey,
   type CatalogChangeFeed,

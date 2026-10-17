@@ -196,7 +196,7 @@ describe("desktop app with the cloud", () => {
     expect(back.origin + back.pathname).toBe(redirect);
 
     await expect(w.cloud.completeSignIn({ code: back.searchParams.get("code")!, state: "forged-state-value" })).rejects.toThrow(/not started here/);
-    // A forged state also ends the attempt.
+    // Start over: a fresh attempt still works after a forged callback.
     await w.cloud.startSignIn("google", redirect);
     const retry = new URL(w.opened[1]!);
     const again = new URL("/api/auth/desktop/authorize", SERVER);
