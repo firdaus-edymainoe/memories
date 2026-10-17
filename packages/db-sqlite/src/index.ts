@@ -6,12 +6,9 @@ import type {
   CatalogPort,
   ContentObject,
   Drive,
-  DriveKind,
-  FileKind,
   FileQuery,
   LibraryFile,
   Replica,
-  ReplicaStatus,
   VirtualFolder,
 } from "@memories/core";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
@@ -19,6 +16,8 @@ import { drizzle, type SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { ChangeFeed, installChangeTracking } from "./changes.js";
+import { toDrive, toFile, toJob, toReplica } from "./rows.js";
 import * as schema from "./schema.js";
 
 const DDL = `
@@ -70,29 +69,7 @@ CREATE TABLE IF NOT EXISTS backup_jobs (
 );
 `;
 
-function toDrive(row: typeof schema.drives.$inferSelect): Drive {
-  return {
-    id: row.id,
-    name: row.name,
-    kind: row.kind as DriveKind,
-    rootPath: row.rootPath,
-    volumeId: row.volumeId,
-    online: row.online,
-  };
-}
 
-function toFile(row: typeof schema.files.$inferSelect): LibraryFile {
-  return {
-    id: row.id,
-    objectHash: row.objectHash,
-    name: row.name,
-    kind: row.kind as FileKind,
-    takenAt: row.takenAt,
-    place: row.place,
-    inbox: row.inbox,
-    trashedAt: row.trashedAt,
-  };
-}
 
 /**
  * Changes to apply after the base schema, in order. `PRAGMA user_version` records how many have
@@ -144,6 +121,8 @@ const MIGRATIONS: ReadonlyArray<(sqlite: DatabaseSync) => void> = [
       );
     `);
   },
+  // 3: queue catalog changes for the optional cloud sync (off until the person turns it on).
+  (sqlite) => installChangeTracking(sqlite),
 ];
 
 function addColumn(sqlite: DatabaseSync, table: string, column: string, type: string) {
@@ -212,6 +191,11 @@ export class SqliteCatalog implements CatalogPort {
 
   close() {
     this.sqlite.close();
+  }
+
+  /** Outgoing changes for cloud sync. Recording starts only when sync is turned on. */
+  changes() {
+    return new ChangeFeed(this.sqlite, this.db);
   }
 
   async listDrives() {
@@ -418,28 +402,4 @@ export class SqliteCatalog implements CatalogPort {
         ),
       );
   }
-}
-
-function toReplica(row: typeof schema.replicas.$inferSelect): Replica {
-  return {
-    fileId: row.fileId,
-    driveId: row.driveId,
-    relativePath: row.relativePath,
-    status: row.status as ReplicaStatus,
-    progress: row.progress,
-    size: row.size,
-    modifiedAt: row.modifiedAt,
-    objectHash: row.objectHash,
-  };
-}
-
-function toJob(row: typeof schema.backupJobs.$inferSelect): BackupJob {
-  return {
-    id: row.id,
-    sourceDriveId: row.sourceDriveId,
-    destDriveId: row.destDriveId,
-    sourceRelativePaths: JSON.parse(row.sourceRelativePaths) as string[],
-    lastRunAt: row.lastRunAt,
-    auto: row.auto,
-  };
 }

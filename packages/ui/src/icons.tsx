@@ -11,6 +11,7 @@ const PATHS = {
   computer: "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 14.5z M9 20h6 M12 16v4",
   disk: "M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 17.5z M9 16.5h6 M12 11.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
   usb: "M8 10h8v9.5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 8 19.5z M9.5 10V3.5h5V10 M11 6h.01 M13 6h.01",
+  cloud: "M7 18.5a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4.5 4.5 0 0 1-.5 9z",
   phone: "M8 3h8a1.5 1.5 0 0 1 1.5 1.5v15A1.5 1.5 0 0 1 16 21H8a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 8 3z M11 18h2",
   folder: "M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z",
   plus: "M12 5v14 M5 12h14",
@@ -56,9 +57,10 @@ export function Icon({ name, size = 18, className }: { name: IconName; size?: nu
   );
 }
 
-export const PLACE_ICON: Record<"computer" | "disk" | "usb" | "phone", IconName> = {
+export const PLACE_ICON: Record<"computer" | "disk" | "usb" | "phone" | "cloud", IconName> = {
   computer: "computer",
   disk: "disk",
   usb: "usb",
   phone: "phone",
+  cloud: "cloud",
 };

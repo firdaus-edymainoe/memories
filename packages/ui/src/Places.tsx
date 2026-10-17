@@ -1,7 +1,7 @@
 import type { DirEntry, Drive, DriveKind, VolumePresence } from "@memories/core";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useMemo, useState } from "react";
-import { FAMILY, familyOf, formatSize, pathLeaf, PLACE_KIND, placeStatus, placeWhere, plural, SHELF, SHELF_ORDER, shelfOf } from "./files.js";
+import { ADDABLE_KINDS, FAMILY, familyOf, formatSize, pathLeaf, PLACE_KIND, placeStatus, placeWhere, plural, SHELF, SHELF_ORDER, shelfOf } from "./files.js";
 import { Icon } from "./icons.js";
 import { FolderWait } from "./Preview.js";
 import { Tile } from "./Tile.js";
@@ -287,7 +287,7 @@ export function AddPlaceDialog({
             <h2 id="add-title">Add a place</h2>
             <p className="dialog-lede">Where are the files you’d like Memories to look after?</p>
             <div className="kind-grid">
-              {(Object.keys(PLACE_KIND) as DriveKind[]).map((value) => (
+              {ADDABLE_KINDS.map((value) => (
                 <button
                   key={value}
                   type="button"

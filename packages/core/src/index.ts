@@ -64,3 +64,24 @@ export type { FileDetail, OpenedFile } from "./use-cases.js";
 export { deleteForever, emptyTrash, listTrash, restoreFiles, trashFiles, type DeleteResult } from "./trash.js";
 export { exportFiles, type ExportResult } from "./export.js";
 export { BackupScheduler } from "./scheduler.js";
+export {
+  SYNC_ENTITIES,
+  cloudUserFrom,
+  syncCatalog,
+  syncKey,
+  type CatalogChangeFeed,
+  type ChangeBatch,
+  type CloudAdminUser,
+  type CloudCatalogGateway,
+  type CloudCatalogStore,
+  type CloudDevice,
+  type CloudProvider,
+  type CloudRole,
+  type CloudStatus,
+  type CloudSyncState,
+  type CloudUser,
+  type SyncBatch,
+  type SyncEntity,
+  type SyncRecord,
+  type SyncResult,
+} from "./cloud.js";

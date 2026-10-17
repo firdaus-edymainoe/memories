@@ -9,6 +9,7 @@ Memories is a **file organizer for drives on this computer**. The product is Ele
 
 - It must read this machine plus external disks and USB sticks. Do not ship the organizer as a browser-only app.
 - No account required. Catalog, views (Images / Videos / Documents / Events), place files, backup between local drives.
+- **Cloud mode is optional.** Local only is the default and needs no login. Signing in (only offered when the app has `MEMORIES_CLOUD_URL`) adds catalog sync to PostgreSQL and cloud storage as a place. Nothing reaches the cloud before someone signs in and turns it on.
 - The HTML mock in `app/` is the visual spec. Port it; do not restyle it. `product.html` is the story.
 - **Host:** Electron. Hono on `127.0.0.1`, inside the app, behind a per-launch token. SQLite via Drizzle (`node:sqlite`). File I/O isolated per OS (`fs-darwin`, `fs-win32`).
 - **A drive is a folder** the user registers, not the whole physical disk. All work toward that drive stays inside that root. Volume UUID/serial is only how we know the folder is plugged in.

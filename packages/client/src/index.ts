@@ -1,6 +1,11 @@
 import type {
   BackupJob,
   BackupRun,
+  CloudAdminUser,
+  CloudProvider,
+  CloudRole,
+  CloudStatus,
+  CloudUser,
   DeleteResult,
   ExportResult,
   DirEntry,
@@ -260,5 +265,74 @@ export class MemoriesClient {
 
   sync() {
     return parse<{ ok: boolean }>(this.fetch(`${this.baseUrl}/sync`, { method: "POST" }));
+  }
+
+  // Optional cloud mode. `cloudStatus().available` is false when the app is local only.
+
+  cloudStatus() {
+    return parse<{ status: CloudStatus }>(this.fetch(`${this.baseUrl}/cloud/status`)).then((b) => b.status);
+  }
+
+  cloudSignUp(input: { name: string; email: string; password: string }) {
+    return this.post<{ user: CloudUser }>("/cloud/sign-up", input).then((b) => b.user);
+  }
+
+  cloudSignIn(input: { email: string; password: string }) {
+    return this.post<{ user: CloudUser }>("/cloud/sign-in", input).then((b) => b.user);
+  }
+
+  /** Opens the system browser to sign in; the app hears back when it is done. */
+  cloudSignInWith(provider: CloudProvider) {
+    return this.post<{ url: string }>("/cloud/sign-in/provider", { provider });
+  }
+
+  cloudSignOut() {
+    return this.post<{ ok: boolean }>("/cloud/sign-out");
+  }
+
+  cloudForgotPassword(email: string) {
+    return this.post<{ ok: boolean }>("/cloud/forgot-password", { email });
+  }
+
+  cloudResendVerification() {
+    return this.post<{ ok: boolean }>("/cloud/verify-email");
+  }
+
+  cloudRefresh() {
+    return this.post<{ user: CloudUser | null }>("/cloud/refresh").then((b) => b.user);
+  }
+
+  cloudSetSync(enabled: boolean) {
+    return this.post<{ status: CloudStatus }>("/cloud/sync/enabled", { enabled }).then((b) => b.status);
+  }
+
+  cloudSyncNow() {
+    return this.post<{ status: CloudStatus }>("/cloud/sync/now").then((b) => b.status);
+  }
+
+  /** Adds cloud storage as a place. */
+  cloudAddStorage() {
+    return this.post<{ drive: Drive }>("/cloud/storage").then((b) => b.drive);
+  }
+
+  cloudUsers(search = "") {
+    const q = search ? `?${new URLSearchParams({ search })}` : "";
+    return parse<{ users: CloudAdminUser[]; total: number }>(this.fetch(`${this.baseUrl}/cloud/admin/users${q}`));
+  }
+
+  cloudSetRole(userId: string, role: CloudRole) {
+    return this.post<{ ok: boolean }>(`/cloud/admin/users/${encodeURIComponent(userId)}/role`, { role });
+  }
+
+  cloudBan(userId: string, reason?: string) {
+    return this.post<{ ok: boolean }>(`/cloud/admin/users/${encodeURIComponent(userId)}/ban`, reason ? { reason } : {});
+  }
+
+  cloudUnban(userId: string) {
+    return this.post<{ ok: boolean }>(`/cloud/admin/users/${encodeURIComponent(userId)}/unban`);
+  }
+
+  cloudRemoveUser(userId: string) {
+    return this.post<{ ok: boolean }>(`/cloud/admin/users/${encodeURIComponent(userId)}/remove`);
   }
 }

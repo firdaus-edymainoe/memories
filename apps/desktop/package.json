@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.4",
+    "@memories/cloud-link": "*",
     "@memories/core": "*",
     "@memories/db-sqlite": "*",
     "@memories/fs-android": "*",

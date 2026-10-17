@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { configureVendorDirectory } from "@memories/fs-android";
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { PlainSecretBox, type SecretBox } from "@memories/cloud-link";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, shell } from "electron";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -88,6 +89,21 @@ function staticUi(root: string) {
   return ui;
 }
 
+/** The session token is sealed with the OS keychain (Keychain on macOS, DPAPI on Windows). */
+function tokenSecrets(): SecretBox {
+  if (!safeStorage.isEncryptionAvailable()) return new PlainSecretBox();
+  return {
+    encrypt: (plain) => safeStorage.encryptString(plain).toString("base64"),
+    decrypt: (sealed) => safeStorage.decryptString(Buffer.from(sealed, "base64")),
+  };
+}
+
+function focusWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
 async function startApi() {
   const token = randomBytes(32).toString("base64url");
   const catalogPath = process.env.MEMORIES_DB ?? defaultCatalogPath();
@@ -96,6 +112,12 @@ async function startApi() {
     allowedOrigins: devUi ? [new URL(devUi).origin] : [],
     pickFolder,
     thumbnail: createOsThumbnails(join(dirname(catalogPath), "thumbnails")),
+    onCloudSignedIn: focusWindow,
+  }, {
+    // Cloud mode is offered only when the app knows its cloud server.
+    serverUrl: process.env.MEMORIES_CLOUD_URL ?? null,
+    secrets: tokenSecrets(),
+    openExternal: (url) => shell.openExternal(url),
   });
 
   const root = new Hono();
