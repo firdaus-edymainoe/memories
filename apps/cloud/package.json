@@ -1,0 +1,27 @@
+{
+  "name": "@memories/cloud",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/serve.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "grant-admin": "tsx scripts/grant-admin.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.4",
+    "@memories/core": "*",
+    "@memories/db-postgres": "*",
+    "@memories/storage": "*",
+    "better-auth": "^1.7.10",
+    "hono": "^4.9.8",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.0"
+  }
+}

@@ -1,4 +1,5 @@
-export type DriveKind = "computer" | "disk" | "usb" | "phone";
+/** `cloud` is the person's cloud storage, offered only when they have signed in. */
+export type DriveKind = "computer" | "disk" | "usb" | "phone" | "cloud";
 export type FileKind = "photo" | "video" | "document";
 export type ReplicaStatus = "ready" | "copying";
 
